@@ -1,0 +1,1 @@
+ Make a single-file HTML5 canvas game where the player controls the wind, not a character. Invent what the wind affects, the goal, the lose condition, and one mechanic that only makes sense because you're the wind. No external assets. It should be fun for 2 minutes.

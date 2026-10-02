@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GUST — you are the wind</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  canvas{width:min(92vw,900px);aspect-ratio:3/2;background:#000;border-radius:10px;box-shadow:0 20px 80px #000c;cursor:none;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="c" width="900" height="600"></canvas>
+<script>
+"use strict";
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const W = 900, H = 600;
+
+// ---------- levels ----------
+// wind passes through walls; the seed cannot. that is the whole game.
+const LEVELS = [
+  { name:"The Meadow",
+    start:{x:150,y:250}, nest:{x:755,y:215},
+    walls:[ {x:430,y:360,w:26,h:224} ],
+    spikes:[ {x:0,y:584,w:W,h:16,d:"up"} ]
+  },
+  { name:"The Pass",
+    start:{x:150,y:300}, nest:{x:760,y:290},
+    walls:[ {x:432,y:120,w:30,h:464}, {x:180,y:430,w:26,h:154}, {x:690,y:430,w:26,h:154} ],
+    spikes:[ {x:0,y:584,w:W,h:16,d:"up"}, {x:432,y:102,w:30,h:18,d:"up"} ]
+  },
+  { name:"The Cave",
+    start:{x:140,y:280}, nest:{x:770,y:322},
+    walls:[ {x:560,y:80,w:26,h:180}, {x:560,y:380,w:26,h:204}, {x:250,y:430,w:26,h:154} ],
+    spikes:[ {x:0,y:584,w:W,h:16,d:"up"}, {x:586,y:244,w:280,h:16,d:"down"}, {x:586,y:364,w:280,h:16,d:"down"} ]
+  }
+];
+
+// ---------- state ----------
+let state = "menu", lvl = 0, time = 0, stateT = 0, bannerT = 0;
+let seed = {x:0,y:0,vx:0,vy:0,rot:0};
+let dust = [], stars = [];
+let mouse = {x:W/2, y:H/2, px:W/2, py:H/2, vx:0, vy:0};
+let charging = false, charge = 0, gustT = 0, gustMult = 1;
+let burst = []; // death/confetti particles
+
+for (let i=0;i<70;i++) dust.push({x:Math.random()*W, y:Math.random()*H, vx:0, vy:0, s:1+Math.random()*1.6});
+for (let i=0;i<90;i++) stars.push({x:Math.random()*W, y:Math.random()*H*0.8, r:Math.random()*1.4+0.3, a:0.2+Math.random()*0.6});
+
+function loadLevel(i){
+  lvl = i;
+  const L = LEVELS[i];
+  seed = {x:L.start.x, y:L.start.y, vx:0, vy:0, rot:0};
+  charging=false; charge=0; gustT=0; gustMult=1; burst=[];
+  state = "play"; stateT = 0; bannerT = 2.4; time = 0;
+  mouse.x = seed.x - 160; mouse.y = seed.y + 60; mouse.px = mouse.x; mouse.py = mouse.y;
+}
+
+// ---------- input ----------
+function toCanvas(e){
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*W/r.width, y:(e.clientY-r.top)*H/r.height };
+}
+addEventListener("pointermove", e=>{ const p=toCanvas(e); mouse.x=p.x; mouse.y=p.y; });
+addEventListener("pointerdown", e=>{
+  const p=toCanvas(e); mouse.x=p.x; mouse.y=p.y;
+  if(state==="play") charging = true;
+  else if(state==="menu") startGame();
+  else if(state==="dead" && stateT>0.8) loadLevel(lvl);
+  else if(state==="win" && stateT>1) { state="menu"; }
+});
+addEventListener("pointerup", ()=>{ if(state==="play" && charging) releaseGust(); charging=false; });
+addEventListener("keydown", e=>{
+  if(e.key==="Shift" && state==="play" && !charging){ charging=true; }
+  if((e.key==="r"||e.key==="R") && (state==="play"||state==="dead")) loadLevel(lvl);
+  if(e.key==="Enter" && (state==="menu"||state==="win")) startGame();
+});
+addEventListener("keyup", e=>{ if(e.key==="Shift"){ if(charging) releaseGust(); charging=false; } });
+function releaseGust(){
+  gustT = 0.9; gustMult = 1 + charge*2.2; charge = 0;
+}
+function startGame(){ time=0; loadLevel(0); }
+
+// ---------- physics ----------
+const R_WIND = 150;
+function windForceAt(x,y){
+  if(state!=="play" || charging) return {x:0,y:0};
+  const dx=x-mouse.x, dy=y-mouse.y, d=Math.hypot(dx,dy);
+  if(d>R_WIND) return {x:0,y:0};
+  const fall = Math.pow(1-d/R_WIND, 1.4);
+  let fx = mouse.vx*2.2*fall, fy = mouse.vy*2.2*fall;
+  if(gustT>0){ fx*=gustMult; fy*=gustMult; }
+  const m = Math.hypot(fx,fy);
+  if(m>3200){ fx*=3200/m; fy*=3200/m; }
+  return {x:fx,y:fy};
+}
+
+function circleRect(cx,cy,r,rc){
+  const nx = Math.max(rc.x, Math.min(cx, rc.x+rc.w));
+  const ny = Math.max(rc.y, Math.min(cy, rc.y+rc.h));
+  const dx=cx-nx, dy=cy-ny, d2=dx*dx+dy*dy;
+  if(d2 > r*r) return null;
+  const d = Math.sqrt(d2) || 0.001;
+  return {nx:dx/d, ny:dy/d, depth:r-d};
+}
+
+const R_SEED = 9;
+function stepSeed(dt){
+  const L = LEVELS[lvl];
+  const f = windForceAt(seed.x, seed.y);
+  seed.vx += f.x*dt; seed.vy += (f.y + 150)*dt;          // dandelion fluff: gentle gravity
+  const drag = Math.exp(-1.5*dt);
+  seed.vx*=drag; seed.vy*=drag;
+  seed.x += seed.vx*dt; seed.y += seed.vy*dt;
+  seed.rot += seed.vx*dt*0.02;
+
+  // world edges: solid (wind blows through, seed bounces)
+  const bounce = 0.3;
+  if(seed.x < R_SEED){ seed.x=R_SEED; seed.vx=Math.abs(seed.vx)*bounce; }
+  if(seed.x > W-R_SEED){ seed.x=W-R_SEED; seed.vx=-Math.abs(seed.vx)*bounce; }
+  if(seed.y < R_SEED){ seed.y=R_SEED; seed.vy=Math.abs(seed.vy)*bounce; }
+
+  for(const w of L.walls){
+    const c = circleRect(seed.x,seed.y,R_SEED,w);
+    if(c){
+      seed.x += c.nx*c.depth; seed.y += c.ny*c.depth;
+      const vn = seed.vx*c.nx + seed.vy*c.ny;
+      if(vn<0){ seed.vx -= (1+bounce)*vn*c.nx; seed.vy -= (1+bounce)*vn*c.ny; }
+      seed.vx*=0.985; seed.vy*=0.985;
+    }
+  }
+  for(const s of L.spikes){ // inset a touch so it feels fair
+    if(circleRect(seed.x,seed.y,R_SEED-2,{x:s.x+3,y:s.y+3,w:s.w-6,h:s.h-6})) kill();
+  }
+  if(seed.y > H+40) kill();
+
+  const d = Math.hypot(seed.x-L.nest.x, seed.y-L.nest.y);
+  if(d < 17) clearLevel();
+}
+function kill(){
+  if(state!=="play") return;
+  for(let i=0;i<20;i++){
+    const a=Math.random()*Math.PI*2, sp=60+Math.random()*220;
+    burst.push({x:seed.x,y:seed.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,t:0.9,fluff:true});
+  }
+  state="dead"; stateT=0;
+}
+function clearLevel(){
+  if(state!=="play") return;
+  state="clear"; stateT=0;
+}
+
+// ---------- update ----------
+function update(dt){
+  stateT += dt;
+  if(bannerT>0) bannerT-=dt;
+  if(gustT>0) gustT-=dt;
+
+  // mouse velocity, smoothed
+  const ivx=(mouse.x-mouse.px)/dt, ivy=(mouse.y-mouse.py)/dt;
+  const k=1-Math.pow(0.0001,dt); // frame-rate independent smoothing
+  mouse.vx += (ivx-mouse.vx)*k; mouse.vy += (ivy-mouse.vy)*k;
+  mouse.px=mouse.x; mouse.py=mouse.y;
+
+  if(state==="play"){
+    time += dt;
+    if(charging) charge = Math.min(1, charge+dt/1.1);
+    stepSeed(dt);
+  }
+  else if(state==="clear"){
+    // seed flies into the nest, then on to the next level
+    const N = LEVELS[lvl].nest;
+    seed.x += (N.x-seed.x)*Math.min(1,dt*8);
+    seed.y += (N.y-seed.y)*Math.min(1,dt*8);
+    if(stateT>1.2){
+      if(lvl+1 < LEVELS.length) loadLevel(lvl+1);
+      else { state="win"; stateT=0; }
+    }
+  }
+
+  // dust rides the wind
+  for(const p of dust){
+    const f = windForceAt(p.x,p.y);
+    p.vx += f.x*2.2*dt + (Math.random()-0.5)*30*dt*8;
+    p.vy += f.y*2.2*dt + (Math.random()-0.5)*30*dt*8 + 8*dt;
+    p.vx*=Math.exp(-2*dt); p.vy*=Math.exp(-2*dt);
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    if(p.x<-10)p.x=W+10; if(p.x>W+10)p.x=-10;
+    if(p.y<-10)p.y=H+10; if(p.y>H+10)p.y=-10;
+  }
+  for(const b of burst){ b.t-=dt; b.x+=b.vx*dt; b.y+=b.vy*dt; b.vy+=(b.fluff?30:300)*dt; b.vx*=0.99; }
+  burst = burst.filter(b=>b.t>0);
+}
+
+// ---------- render ----------
+function drawSky(){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#0b1026"); g.addColorStop(0.6,"#182448"); g.addColorStop(1,"#232f55");
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  for(const s of stars){ ctx.globalAlpha=s.a*(0.7+0.3*Math.sin(time*2+s.x)); ctx.fillStyle="#cfe0ff";
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,7); ctx.fill(); }
+  ctx.globalAlpha=1;
+  // moon
+  ctx.fillStyle="#e8ecff22"; ctx.beginPath(); ctx.arc(740,90,46,0,7); ctx.fill();
+  ctx.fillStyle="#e8ecff66"; ctx.beginPath(); ctx.arc(740,90,30,0,7); ctx.fill();
+  // far hills
+  ctx.fillStyle="#141d3a";
+  ctx.beginPath(); ctx.moveTo(0,H);
+  for(let x=0;x<=W;x+=10) ctx.lineTo(x, H-70-Math.sin(x*0.012)*28-Math.sin(x*0.031)*14);
+  ctx.lineTo(W,H); ctx.fill();
+}
+function drawRects(list, fill, edge){
+  for(const r of list){
+    ctx.fillStyle=fill;
+    ctx.beginPath(); ctx.roundRect(r.x,r.y,r.w,r.h,5); ctx.fill();
+    ctx.strokeStyle=edge; ctx.lineWidth=1.5; ctx.stroke();
+  }
+}
+function drawSpikes(s){
+  const n = Math.max(2, Math.round((s.d==="up"?s.w:s.h) / 12));
+  const len = s.h;
+  ctx.fillStyle="#8a2f3c";
+  for(let i=0;i<n;i++){
+    ctx.beginPath();
+    if(s.d==="up"){
+      const x0=s.x + s.w*i/n, x1=s.x + s.w*(i+1)/n;
+      ctx.moveTo(x0,s.y+len); ctx.lineTo((x0+x1)/2, s.y); ctx.lineTo(x1,s.y+len);
+    } else {
+      const y0=s.y + s.h*i/n, y1=s.y + s.h*(i+1)/n;
+      ctx.moveTo(s.x,y0); ctx.lineTo(s.x+len,(y0+y1)/2); ctx.lineTo(s.x,y1);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+}
+function drawNest(n){
+  const pulse = 1 + 0.12*Math.sin(time*3.2);
+  ctx.save(); ctx.translate(n.x,n.y);
+  const glow = ctx.createRadialGradient(0,0,4,0,0,34*pulse);
+  glow.addColorStop(0,"#ffe9a855"); glow.addColorStop(1,"#ffe9a800");
+  ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(0,0,34*pulse,0,7); ctx.fill();
+  ctx.strokeStyle="#ffe9a8aa"; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(0,0,20*pulse,0,7); ctx.stroke();
+  // basket
+  ctx.strokeStyle="#a4713d"; ctx.lineWidth=4;
+  for(let i=0;i<5;i++){ ctx.beginPath(); ctx.arc(0,4,13+i*1.4, 0.2*Math.PI, 0.8*Math.PI); ctx.stroke(); }
+  ctx.restore();
+}
+function drawSeed(x,y,rot,scale=1){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot); ctx.scale(scale,scale);
+  ctx.strokeStyle="#f4f7d8"; ctx.lineWidth=1.2;
+  for(let i=0;i<9;i++){
+    const a = i/9*Math.PI*2 + Math.sin(time*6+i)*0.08;
+    ctx.beginPath(); ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(a)*9, Math.sin(a)*9); ctx.stroke();
+    ctx.fillStyle="#f4f7d8"; ctx.beginPath(); ctx.arc(Math.cos(a)*9, Math.sin(a)*9,1.6,0,7); ctx.fill();
+  }
+  ctx.fillStyle="#d9c98f"; ctx.beginPath(); ctx.arc(0,0,3,0,7); ctx.fill();
+  ctx.restore();
+}
+function drawDust(){
+  for(const p of dust){
+    const sp = Math.hypot(p.vx,p.vy);
+    ctx.globalAlpha = Math.min(0.5, 0.08+sp*0.0012);
+    ctx.fillStyle="#cfe0ff";
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.s,0,7); ctx.fill();
+    if(sp>260){ // streak for fast dust
+      ctx.strokeStyle="#cfe0ff"; ctx.globalAlpha=Math.min(0.3,sp*0.0005); ctx.lineWidth=p.s;
+      ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.05, p.y-p.vy*0.05); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha=1;
+}
+function drawWindAura(){
+  if(state!=="play" && state!=="dead") return;
+  let r = R_WIND*(0.55 + 0.45*Math.min(1,Math.hypot(mouse.vx,mouse.vy)/900));
+  if(charging) r *= 0.6 + 0.4*(1-charge);      // holding breath: the wind draws in
+  if(gustT>0)  r *= 1 + gustT*0.5;
+  const hot = charging || gustT>0;
+  const g = ctx.createRadialGradient(mouse.x,mouse.y,2, mouse.x,mouse.y,r);
+  g.addColorStop(0, hot? "#ffffff40" : "#9fd4ff26");
+  g.addColorStop(1, "#9fd4ff00");
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,r,0,7); ctx.fill();
+  ctx.strokeStyle = hot? "#ffffff88" : "#9fd4ff33"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(mouse.x,mouse.y, r,0,7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(mouse.x,mouse.y, 3,0,7); ctx.stroke(); // cursor
+}
+function drawBurst(){
+  for(const b of burst){
+    ctx.globalAlpha = Math.max(0,b.t);
+    ctx.fillStyle = b.fluff? "#f4f7d8" : "#ffd27a";
+    ctx.beginPath(); ctx.arc(b.x,b.y, b.fluff?2:3,0,7); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+function text(t,x,y,size,color,align="center",weight=""){
+  ctx.fillStyle=color; ctx.font=`${weight} ${size}px ui-sans-serif,system-ui,sans-serif`;
+  ctx.textAlign=align; ctx.textBaseline="middle"; ctx.fillText(t,x,y);
+}
+function bar(x,y,w,h,pct,fg){
+  ctx.fillStyle="#ffffff22"; ctx.beginPath(); ctx.roundRect(x,y,w,h,h/2); ctx.fill();
+  ctx.fillStyle=fg; ctx.beginPath(); ctx.roundRect(x,y,Math.max(h,w*pct),h,h/2); ctx.fill();
+}
+function fmt(t){ return (t/60|0)+":"+String(t%60|0).padStart(2,"0"); }
+
+function render(){
+  drawSky();
+  drawDust();
+  const L = LEVELS[Math.min(lvl, LEVELS.length-1)];
+  drawRects(L.walls, "#3b466e", "#5a6894");
+  for(const s of L.spikes) drawSpikes(s);
+  drawNest(L.nest);
+  if(state!=="dead") drawSeed(seed.x, seed.y, seed.rot, state==="clear"? Math.max(0.4,1-stateT*0.8) : 1);
+  drawBurst();
+  drawWindAura();
+
+  // HUD
+  if(state==="play"||state==="dead"||state==="clear"){
+    text(`Level ${lvl+1} — ${L.name}`, 18, 22, 15, "#cfe0ff", "left");
+    text(fmt(time), W-18, 22, 15, "#cfe0ff", "right");
+    // breath
+    text("breath", 18, 44, 10, "#8fa3d0", "left");
+    bar(58, 38, 120, 10, charging? charge : (gustT>0? gustT/0.9 : 0), charging? "#ffffff" : "#8fd4ff");
+    if(bannerT>0) text(L.name, W/2, H*0.4, 34, `rgba(223,235,255,${Math.min(1,bannerT)})`);
+  }
+  if(state==="menu"){
+    ctx.fillStyle="#0b102088"; ctx.fillRect(0,0,W,H);
+    text("G U S T", W/2, 170, 64, "#e8f1ff", "center", "700");
+    text("you are the wind", W/2, 225, 20, "#8fd4ff");
+    text("move your mouse to blow — a flick is a gust", W/2, 300, 17, "#cfe0ff");
+    text("hold SHIFT or click to hold your breath… release for a burst", W/2, 330, 17, "#cfe0ff");
+    text("carry the dandelion seed to the nest. spikes and the void below will end it.", W/2, 360, 17, "#cfe0ff");
+    text("the wind blows through walls. the seed cannot.", W/2, 390, 17, "#ffd27a");
+    text(stateT%1<0.7? "click or press ENTER" : "", W/2, 460, 20, "#8fd4ff");
+    drawSeed(W/2-220, 460, time, 1.4); drawSeed(W/2+220, 460, -time, 1.4);
+  }
+  if(state==="dead" && stateT>0.6){
+    ctx.fillStyle="#0b1020aa"; ctx.fillRect(0,0,W,H);
+    text("the seed was lost", W/2, 250, 40, "#ffb3c0");
+    text("R or click to try again", W/2, 310, 18, "#cfe0ff");
+  }
+  if(state==="win"){
+    ctx.fillStyle="#0b102088"; ctx.fillRect(0,0,W,H);
+    text("every seed home", W/2, 220, 46, "#ffe9a8", "center","700");
+    text(`finished in ${fmt(time)}`, W/2, 275, 22, "#cfe0ff");
+    text(stateT>1 ? "click or ENTER to play again" : "", W/2, 340, 18, "#8fd4ff");
+  }
+}
+
+// ---------- loop ----------
+let last = performance.now(), acc = 0;
+function frame(now){
+  const dt = Math.min(0.05,(now-last)/1000); last = now;
+  acc += dt;
+  while(acc > 1/120){ update(1/120); acc -= 1/120; }
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

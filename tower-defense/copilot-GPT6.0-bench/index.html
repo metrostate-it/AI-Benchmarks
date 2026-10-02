@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emberline Defense</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101923; }
+  body { display: grid; place-items: center; font-family: system-ui, sans-serif; }
+  canvas { display: block; max-width: 100vw; max-height: 100vh; cursor: crosshair; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="game" width="1000" height="650" aria-label="Emberline Defense tower defense game"></canvas>
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const W = 1000, H = 650, FIELD = 760;
+  const path = [
+    {x:-30,y:125}, {x:145,y:125}, {x:145,y:275},
+    {x:335,y:275}, {x:335,y:105}, {x:540,y:105},
+    {x:540,y:420}, {x:390,y:420}, {x:390,y:550},
+    {x:790,y:550}
+  ];
+  const TYPES = [
+    {name:"Piercer", cost:65, color:"#f6bd60", range:133, rate:0.72, heat:22,
+     desc:"Armor-piercing shots"},
+    {name:"Frost", cost:75, color:"#79dce8", range:112, rate:0.85, heat:19,
+     desc:"Slows enemies"},
+    {name:"Mortar", cost:105, color:"#f28482", range:172, rate:1.8, heat:34,
+     desc:"Area damage"},
+    {name:"Arc", cost:115, color:"#c8a4ff", range:125, rate:1.15, heat:29,
+     desc:"Chains between enemies"}
+  ];
+  const MODS = [
+    {name:"Coolant Loop", detail:"Cooling +30%; tower range -8%.", apply:s=>{s.cool*=1.3;s.range*=0.92;}},
+    {name:"Hot Barrels", detail:"Damage +25%; heat per shot +25%.", apply:s=>{s.damage*=1.25;s.heat*=1.25;}},
+    {name:"Long Sights", detail:"Range +18%; firing speed -12%.", apply:s=>{s.range*=1.18;s.rate*=0.88;}},
+    {name:"Salvage Crew", detail:"Gain 95 gold; sell refunds +15%.", apply:s=>{s.gold+=95;s.refund=Math.min(0.9,s.refund+0.15);}},
+    {name:"Field Rations", detail:"Restore 5 lives; starting gold next waves -10.", apply:s=>{s.lives=Math.min(25,s.lives+5);s.waveTax+=10;}},
+    {name:"Rapid Cycling", detail:"Firing speed +25%; cooling -18%.", apply:s=>{s.rate*=1.25;s.cool*=0.82;}},
+    {name:"Heavy Payload", detail:"Splash and chain damage +35%; range -10%.", apply:s=>{s.special*=1.35;s.range*=0.9;}},
+    {name:"Bounty Contract", detail:"Kill gold +35%; enemies move 8% faster.", apply:s=>{s.bounty*=1.35;s.enemySpeed*=1.08;}},
+    {name:"Emergency Vents", detail:"Heat capacity +30%; tower costs +10%.", apply:s=>{s.capacity*=1.3;s.cost*=1.1;}}
+  ];
+
+  let state, last = 0, mouse = {x:-100,y:-100}, buttons = [];
+  const rand = (a,b) => a + Math.random()*(b-a);
+  const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
+  const distance = (a,b) => Math.hypot(a.x-b.x,a.y-b.y);
+
+  function reset() {
+    state = {
+      screen:"start", wave:0, gold:230, lives:20, towers:[], enemies:[],
+      shots:[], effects:[], selected:null, placing:null, spawn:[],
+      spawnClock:0, waveActive:false, nextId:1, offered:[], mods:[],
+      damage:1, heat:1, cool:1, rate:1, range:1, special:1,
+      bounty:1, enemySpeed:1, capacity:1, cost:1, refund:0.65,
+      waveTax:0, toast:"", toastTime:0
+    };
+  }
+  reset();
+
+  function message(text) { state.toast=text; state.toastTime=2.1; }
+  function button(x,y,w,h,label,action,enabled=true,selected=false) {
+    buttons.push({x,y,w,h,action,enabled});
+    ctx.fillStyle = !enabled ? "#283746" : selected ? "#49687b" : "#243b4e";
+    roundRect(x,y,w,h,9); ctx.fill();
+    ctx.strokeStyle = selected ? "#92e6ec" : "#466075";
+    ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle = enabled ? "#f3f7fa" : "#8393a0";
+    ctx.font="600 15px system-ui"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.fillText(label,x+w/2,y+h/2);
+  }
+  function roundRect(x,y,w,h,r) {
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,r);
+  }
+  function text(str,x,y,size=15,color="#e9f1f5",align="left",weight="400") {
+    ctx.fillStyle=color; ctx.font=`${weight} ${size}px system-ui`;
+    ctx.textAlign=align; ctx.textBaseline="middle"; ctx.fillText(str,x,y);
+  }
+  function wrap(str,x,y,maxWidth,lineHeight=20,color="#c8d5dd",size=14) {
+    ctx.font=`${size}px system-ui`; ctx.fillStyle=color; ctx.textAlign="left";
+    ctx.textBaseline="top";
+    let line="", yy=y;
+    for (const word of str.split(" ")) {
+      const trial=line ? line+" "+word : word;
+      if (ctx.measureText(trial).width>maxWidth && line) {
+        ctx.fillText(line,x,yy); yy+=lineHeight; line=word;
+      } else line=trial;
+    }
+    if(line) ctx.fillText(line,x,yy);
+    return yy+lineHeight;
+  }
+  function segmentDistance(p,a,b) {
+    const dx=b.x-a.x,dy=b.y-a.y;
+    const t=clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy),0,1);
+    return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));
+  }
+  function canPlace(x,y) {
+    if(x<25||x>FIELD-25||y<28||y>H-28) return false;
+    for(let i=0;i<path.length-1;i++)
+      if(segmentDistance({x,y},path[i],path[i+1])<34) return false;
+    return !state.towers.some(t=>Math.hypot(t.x-x,t.y-y)<42);
+  }
+  function towerCost(i) { return Math.ceil(TYPES[i].cost*state.cost); }
+  function upgradeCost(t) { return Math.ceil(TYPES[t.type].cost*(0.68+t.level*0.42)*state.cost); }
+  function towerRange(t) { return TYPES[t.type].range*state.range*(1+t.level*0.12); }
+  function heatCap() { return 100*state.capacity; }
+
+  function startWave() {
+    if(state.waveActive||state.wave>=10) return;
+    state.wave++;
+    state.waveActive=true;
+    state.spawnClock=0.4;
+    state.spawn=[];
+    const w=state.wave, count=8+w*2;
+    for(let i=0;i<count;i++) {
+      let kind;
+      if(w===1) kind="runner";
+      else if(w===2) kind=i%4===0?"armor":"runner";
+      else {
+        const cycle=(i+w)%7;
+        kind=cycle<2?"armor":cycle<4?"splitter":"runner";
+      }
+      state.spawn.push(kind);
+    }
+    if(w===10) state.spawn.push("boss");
+    state.gold+=Math.max(0,Math.round(18+w*3-state.waveTax));
+    message(`Wave ${w} incoming!`);
+  }
+  function createEnemy(kind,x=path[0].x,y=path[0].y,waypoint=1,progress=0) {
+    const w=state.wave;
+    const specs={
+      runner:{hp:34+w*7,speed:88+w*2,armor:0,reward:9,radius:10,leak:1,color:"#e6d47d"},
+      armor:{hp:100+w*19,speed:49+w,armor:0.56,reward:20,radius:14,leak:2,color:"#8498ad"},
+      splitter:{hp:57+w*10,speed:66+w*1.5,armor:0.08,reward:15,radius:12,leak:1,color:"#dd8fd0"},
+      mini:{hp:20+w*4,speed:110+w*2,armor:0,reward:3,radius:7,leak:1,color:"#ffb4df"},
+      boss:{hp:1350,speed:38,armor:0.36,reward:180,radius:23,leak:8,color:"#f06c73"}
+    };
+    const q=specs[kind];
+    state.enemies.push({id:state.nextId++,kind,x,y,waypoint,progress,
+      hp:q.hp,maxHp:q.hp,speed:q.speed,armor:q.armor,reward:q.reward,
+      radius:q.radius,leak:q.leak,color:q.color,slow:0,slowTime:0,flash:0,dead:false});
+  }
+  function kill(e) {
+    if(e.dead) return;
+    e.dead=true;
+    state.gold+=Math.round(e.reward*state.bounty);
+    burst(e.x,e.y,e.color,8);
+    if(e.kind==="splitter") {
+      for(let i=0;i<2;i++) createEnemy("mini",e.x+rand(-7,7),e.y+rand(-7,7),e.waypoint,e.progress);
+    }
+  }
+  function burst(x,y,color,count=5) {
+    for(let i=0;i<count;i++)
+      state.effects.push({type:"spark",x,y,vx:rand(-85,85),vy:rand(-85,85),
+        life:rand(.22,.5),max:.5,color});
+  }
+  function hit(e,amount,pierce=false) {
+    if(e.dead) return;
+    const dealt=amount*(pierce?1:1-e.armor);
+    e.hp-=dealt; e.flash=.11;
+    state.effects.push({type:"number",x:e.x+rand(-8,8),y:e.y-18,
+      life:.6,max:.6,value:Math.round(dealt),color:pierce?"#ffdc91":"#ffffff"});
+    if(e.hp<=0) kill(e);
+  }
+  function targetFor(t) {
+    return state.enemies.filter(e=>!e.dead && distance(t,e)<=towerRange(t))
+      .sort((a,b)=>b.progress-a.progress)[0];
+  }
+  function fire(t,e) {
+    const type=t.type, level=t.level;
+    t.heat+=TYPES[type].heat*state.heat*(1-level*.09);
+    t.cooldown=TYPES[type].rate/(state.rate*(1+level*.17));
+    if(t.heat>=heatCap()) {t.heat=heatCap();t.overheated=true;burst(t.x,t.y,"#ff8e6d",7);}
+    if(type===0) {
+      state.shots.push({type:"bullet",x:t.x,y:t.y,target:e,speed:560,
+        damage:(30+level*14)*state.damage,pierce:true,color:TYPES[type].color});
+    } else if(type===1) {
+      state.shots.push({type:"bullet",x:t.x,y:t.y,target:e,speed:430,
+        damage:(10+level*5)*state.damage,pierce:false,slow:.48+level*.09,
+        color:TYPES[type].color});
+    } else if(type===2) {
+      state.shots.push({type:"mortar",x:t.x,y:t.y,tx:e.x,ty:e.y,
+        life:.38,max:.38,damage:(44+level*19)*state.damage*state.special,
+        radius:(49+level*9),color:TYPES[type].color});
+    } else {
+      let current=e, visited=new Set(), lastPoint={x:t.x,y:t.y};
+      for(let i=0;i<3+level;i++) {
+        if(!current) break;
+        visited.add(current.id);
+        state.effects.push({type:"beam",x:lastPoint.x,y:lastPoint.y,
+          x2:current.x,y2:current.y,life:.16,max:.16,color:TYPES[type].color});
+        hit(current,(24+level*10)*state.damage*state.special*Math.pow(.76,i));
+        lastPoint={x:current.x,y:current.y};
+        current=state.enemies.filter(q=>!q.dead&&!visited.has(q.id)&&distance(q,lastPoint)<95)
+          .sort((a,b)=>distance(a,lastPoint)-distance(b,lastPoint))[0];
+      }
+    }
+  }
+  function offerModifiers() {
+    const pool=[...MODS];
+    state.offered=[];
+    for(let i=0;i<3;i++) state.offered.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]);
+    state.screen="modifier";
+  }
+  function update(dt) {
+    if(state.toastTime>0) state.toastTime-=dt;
+    if(state.screen!=="playing") return;
+    if(state.waveActive && state.spawn.length) {
+      state.spawnClock-=dt;
+      if(state.spawnClock<=0) {
+        createEnemy(state.spawn.shift());
+        state.spawnClock=.82-Math.min(.38,state.wave*.035);
+      }
+    }
+    for(const e of state.enemies) {
+      if(e.dead) continue;
+      e.flash=Math.max(0,e.flash-dt);
+      e.slowTime=Math.max(0,e.slowTime-dt);
+      if(!e.slowTime) e.slow=0;
+      let travel=e.speed*state.enemySpeed*(1-e.slow)*dt;
+      while(travel>0 && e.waypoint<path.length) {
+        const p=path[e.waypoint], d=distance(e,p);
+        if(d<=travel) {
+          e.x=p.x;e.y=p.y;travel-=d;e.waypoint++;
+        } else {
+          e.x+=(p.x-e.x)/d*travel;
+          e.y+=(p.y-e.y)/d*travel;
+          travel=0;
+        }
+      }
+      const prev=path[Math.max(0,e.waypoint-1)];
+      const next=path[Math.min(path.length-1,e.waypoint)];
+      const len=distance(prev,next)||1;
+      e.progress=e.waypoint+1-distance(e,next)/len;
+      if(e.waypoint>=path.length) {
+        e.dead=true;state.lives-=e.leak;
+        burst(FIELD-8,e.y,"#f06c73",10);
+        if(state.lives<=0) {state.lives=0;state.screen="lose";}
+      }
+    }
+    state.enemies=state.enemies.filter(e=>!e.dead);
+    for(const t of state.towers) {
+      t.cooldown=Math.max(0,t.cooldown-dt);
+      t.heat=Math.max(0,t.heat-(t.overheated?29:18)*state.cool*dt);
+      if(t.overheated && t.heat<heatCap()*.34) t.overheated=false;
+      if(!t.overheated && t.cooldown<=0) {
+        const e=targetFor(t);
+        if(e) fire(t,e);
+      }
+    }
+    for(const s of state.shots) {
+      if(s.type==="mortar") {
+        s.life-=dt;
+        if(s.life<=0) {
+          state.effects.push({type:"ring",x:s.tx,y:s.ty,r:s.radius,
+            life:.3,max:.3,color:"#ffb48e"});
+          for(const e of state.enemies)
+            if(distance(e,{x:s.tx,y:s.ty})<=s.radius+e.radius) hit(e,s.damage);
+          burst(s.tx,s.ty,"#ffb48e",12);
+          s.done=true;
+        }
+      } else {
+        if(s.target.dead) {s.done=true;continue;}
+        const d=distance(s,s.target), step=s.speed*dt;
+        if(d<=step+s.target.radius) {
+          hit(s.target,s.damage,s.pierce);
+          if(s.slow && !s.target.dead) {
+            s.target.slow=Math.max(s.target.slow,s.slow);
+            s.target.slowTime=2.1;
+          }
+          burst(s.target.x,s.target.y,s.color,3);
+          s.done=true;
+        } else {
+          s.x+=(s.target.x-s.x)/d*step;
+          s.y+=(s.target.y-s.y)/d*step;
+        }
+      }
+    }
+    state.shots=state.shots.filter(s=>!s.done);
+    for(const fx of state.effects) {
+      fx.life-=dt;
+      if(fx.type==="spark") {fx.x+=fx.vx*dt;fx.y+=fx.vy*dt;fx.vy+=110*dt;}
+      if(fx.type==="number") fx.y-=28*dt;
+    }
+    state.effects=state.effects.filter(fx=>fx.life>0);
+    if(state.waveActive && !state.spawn.length && !state.enemies.length) {
+      state.waveActive=false;
+      if(state.wave===10) state.screen="win";
+      else if(state.wave%3===0) offerModifiers();
+      else message(`Wave ${state.wave} cleared. Build, then launch the next wave.`);
+    }
+  }
+
+  function drawField() {
+    ctx.fillStyle="#172b30";ctx.fillRect(0,0,FIELD,H);
+    ctx.strokeStyle="rgba(190,224,209,.055)";ctx.lineWidth=1;
+    for(let x=20;x<FIELD;x+=40) {ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=20;y<H;y+=40) {ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(FIELD,y);ctx.stroke();}
+    ctx.lineCap="round";ctx.lineJoin="round";
+    for(const [width,color] of [[62,"#34494a"],[49,"#9b8b68"],[37,"#b5a078"]]) {
+      ctx.beginPath();ctx.moveTo(path[0].x,path[0].y);
+      for(let i=1;i<path.length;i++)ctx.lineTo(path[i].x,path[i].y);
+      ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();
+    }
+    ctx.setLineDash([5,14]);ctx.strokeStyle="rgba(255,245,211,.35)";ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(path[0].x,path[0].y);
+    for(let i=1;i<path.length;i++)ctx.lineTo(path[i].x,path[i].y);
+    ctx.stroke();ctx.setLineDash([]);
+    text("ENTRY",15,72,13,"#e9dca9","left","700");
+    text("GATE",FIELD-10,501,13,"#e9dca9","right","700");
+  }
+  function drawTower(t,ghost=false) {
+    const def=TYPES[t.type], range=towerRange(t);
+    if(t===state.selected||ghost) {
+      ctx.beginPath();ctx.arc(t.x,t.y,range,0,Math.PI*2);
+      ctx.fillStyle=ghost?(canPlace(t.x,t.y)?"#79dce81b":"#ff777722"):"#79dce814";
+      ctx.fill();ctx.strokeStyle=ghost?(canPlace(t.x,t.y)?"#92e6ec":"#ff7777"):"#92e6ec88";
+      ctx.lineWidth=1.5;ctx.stroke();
+    }
+    ctx.globalAlpha=ghost?.7:1;
+    ctx.beginPath();ctx.arc(t.x,t.y,19,0,Math.PI*2);
+    ctx.fillStyle="#13202a";ctx.fill();
+    ctx.strokeStyle=def.color;ctx.lineWidth=3;ctx.stroke();
+    ctx.save();ctx.translate(t.x,t.y);
+    ctx.fillStyle=def.color;
+    if(t.type===0) {ctx.fillRect(-3,-15,6,28);ctx.fillRect(-8,0,16,7);}
+    if(t.type===1) {
+      for(let i=0;i<6;i++) {ctx.rotate(Math.PI/3);ctx.fillRect(-2,-13,4,10);}
+      ctx.beginPath();ctx.arc(0,0,5,0,7);ctx.fill();
+    }
+    if(t.type===2) {ctx.fillRect(-10,-8,20,16);ctx.fillStyle="#18242b";ctx.fillRect(-6,-5,12,10);}
+    if(t.type===3) {
+      ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(11,9);ctx.lineTo(-11,9);ctx.closePath();ctx.fill();
+    }
+    ctx.restore();
+    if(!ghost) {
+      for(let i=0;i<t.level;i++) {
+        ctx.beginPath();ctx.arc(t.x-6+i*12,t.y+23,3,0,7);
+        ctx.fillStyle="#ffe08a";ctx.fill();
+      }
+      ctx.fillStyle="#14222a";ctx.fillRect(t.x-18,t.y-27,36,5);
+      ctx.fillStyle=t.overheated?"#ff6d68":"#ffb36b";
+      ctx.fillRect(t.x-18,t.y-27,36*t.heat/heatCap(),5);
+      if(t.overheated) text("!",t.x,t.y-39,18,"#ff756e","center","800");
+    }
+    ctx.globalAlpha=1;
+  }
+  function drawEnemy(e) {
+    ctx.beginPath();ctx.arc(e.x,e.y,e.radius+2,0,7);
+    ctx.fillStyle=e.slowTime?"#8ce9ef":"#24303b";ctx.fill();
+    ctx.beginPath();ctx.arc(e.x,e.y,e.radius,0,7);
+    ctx.fillStyle=e.flash?"#ffffff":e.color;ctx.fill();
+    if(e.kind==="armor"||e.kind==="boss") {
+      ctx.strokeStyle="#e8f0f3";ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(e.x,e.y,e.radius-4,Math.PI*.2,Math.PI*1.8);ctx.stroke();
+    }
+    if(e.kind==="splitter") {
+      ctx.fillStyle="#492c4c";
+      ctx.beginPath();ctx.arc(e.x-4,e.y,3,0,7);ctx.arc(e.x+4,e.y,3,0,7);ctx.fill();
+    }
+    const bw=e.kind==="boss"?54:30;
+    ctx.fillStyle="#1c252d";ctx.fillRect(e.x-bw/2,e.y-e.radius-11,bw,5);
+    ctx.fillStyle=e.kind==="boss"?"#ff7777":"#9ce2a5";
+    ctx.fillRect(e.x-bw/2,e.y-e.radius-11,bw*clamp(e.hp/e.maxHp,0,1),5);
+  }
+  function drawEffects() {
+    for(const s of state.shots) {
+      if(s.type==="mortar") {
+        const p=1-s.life/s.max;
+        ctx.beginPath();ctx.arc(s.x+(s.tx-s.x)*p,s.y+(s.ty-s.y)*p-45*Math.sin(Math.PI*p),6,0,7);
+        ctx.fillStyle="#ffb48e";ctx.fill();
+        ctx.beginPath();ctx.arc(s.tx,s.ty,s.radius,0,7);
+        ctx.strokeStyle="#ffb48e66";ctx.lineWidth=1;ctx.stroke();
+      } else {
+        ctx.beginPath();ctx.arc(s.x,s.y,4,0,7);ctx.fillStyle=s.color;ctx.fill();
+      }
+    }
+    for(const f of state.effects) {
+      ctx.globalAlpha=clamp(f.life/f.max,0,1);
+      ctx.strokeStyle=f.color;ctx.fillStyle=f.color;
+      if(f.type==="spark") {ctx.beginPath();ctx.arc(f.x,f.y,2.5,0,7);ctx.fill();}
+      if(f.type==="beam") {
+        ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(f.x,f.y);
+        ctx.lineTo((f.x+f.x2)/2+rand(-4,4),(f.y+f.y2)/2+rand(-4,4));
+        ctx.lineTo(f.x2,f.y2);ctx.stroke();
+      }
+      if(f.type==="ring") {ctx.lineWidth=3;ctx.beginPath();ctx.arc(f.x,f.y,f.r*(1-f.life/f.max),0,7);ctx.stroke();}
+      if(f.type==="number") text(String(f.value),f.x,f.y,13,f.color,"center","700");
+      ctx.globalAlpha=1;
+    }
+  }
+  function drawSidebar() {
+    ctx.fillStyle="#101e2a";ctx.fillRect(FIELD,0,W-FIELD,H);
+    ctx.fillStyle="#2d4858";ctx.fillRect(FIELD,0,2,H);
+    text("EMBERLINE",FIELD+18,31,22,"#f6df9a","left","800");
+    text(`Gold  ${state.gold}`,FIELD+18,70,17,"#f8d17c","left","700");
+    text(`Lives  ${state.lives}`,FIELD+18,96,17,"#f29191","left","700");
+    text(`Wave  ${state.wave} / 10`,FIELD+18,122,17,"#c9e8ed","left","700");
+    ctx.strokeStyle="#344b5c";ctx.beginPath();ctx.moveTo(FIELD+16,146);ctx.lineTo(W-16,146);ctx.stroke();
+    text("BUILD TOWERS",FIELD+18,169,13,"#9cb5c3","left","700");
+    TYPES.forEach((def,i)=>{
+      const y=182+i*58;
+      button(FIELD+15,y,210,48,`${i+1}  ${def.name}  ·  ${towerCost(i)}g`,
+        ()=>{state.placing=i;state.selected=null;},state.gold>=towerCost(i),state.placing===i);
+      ctx.fillStyle=def.color;ctx.fillRect(FIELD+21,y+10,4,28);
+    });
+    ctx.strokeStyle="#344b5c";ctx.beginPath();ctx.moveTo(FIELD+16,426);ctx.lineTo(W-16,426);ctx.stroke();
+    if(state.selected) {
+      const t=state.selected, def=TYPES[t.type];
+      text(`${def.name}  ·  Level ${t.level+1}`,FIELD+18,449,16,def.color,"left","700");
+      text(def.desc,FIELD+18,474,13,"#b9cbd5");
+      text(`Heat ${Math.round(t.heat/heatCap()*100)}%${t.overheated?" · VENTING":""}`,
+        FIELD+18,498,13,t.overheated?"#ff8c82":"#e9f1f5");
+      ctx.fillStyle="#30404c";ctx.fillRect(FIELD+18,514,204,8);
+      ctx.fillStyle=t.overheated?"#f27470":"#f4b36e";
+      ctx.fillRect(FIELD+18,514,204*t.heat/heatCap(),8);
+      button(FIELD+16,534,208,39,
+        t.level<2?`Upgrade · ${upgradeCost(t)}g`:"Fully upgraded",
+        ()=>{const c=upgradeCost(t);if(t.level<2&&state.gold>=c){state.gold-=c;t.spent+=c;t.level++;}},
+        t.level<2&&state.gold>=upgradeCost(t));
+      button(FIELD+16,580,208,39,`Sell · ${Math.floor(t.spent*state.refund)}g`,()=>{
+        state.gold+=Math.floor(t.spent*state.refund);
+        state.towers=state.towers.filter(q=>q!==t);state.selected=null;
+      });
+    } else {
+      wrap(state.placing!==null?"Click open ground to place. Esc or right-click cancels.":
+        "Select a tower to inspect heat, upgrade it twice, or sell it.",FIELD+18,447,203,20);
+      text("COUNTERS",FIELD+18,520,13,"#9cb5c3","left","700");
+      wrap("Piercer beats armor. Frost catches runners. Mortar clears splitters. Arc chains through groups.",
+        FIELD+18,540,202,19);
+    }
+    if(!state.waveActive && state.screen==="playing")
+      button(20,16,165,42,`Start wave ${state.wave+1}`,startWave);
+    button(FIELD-118,16,100,42,"Pause  P",()=>{state.screen="paused";});
+    if(state.toastTime>0) {
+      ctx.fillStyle="#10212de8";roundRect(188,15,445,43,8);ctx.fill();
+      text(state.toast,410,37,14,"#f3e6b4","center","600");
+    }
+  }
+  function overlay(title,subtitle) {
+    ctx.fillStyle="#08131ddd";ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#172a38";roundRect(225,125,550,400,18);ctx.fill();
+    ctx.strokeStyle="#57788b";ctx.lineWidth=2;ctx.stroke();
+    text(title,500,182,34,"#f7dda0","center","800");
+    text(subtitle,500,226,15,"#c9dce5","center");
+  }
+  function draw() {
+    buttons=[];
+    drawField();
+    for(const t of state.towers) drawTower(t);
+    for(const e of state.enemies) drawEnemy(e);
+    drawEffects();
+    if(state.placing!==null && state.screen==="playing" && mouse.x<FIELD)
+      drawTower({x:mouse.x,y:mouse.y,type:state.placing,level:0},true);
+    drawSidebar();
+    if(state.screen==="start") {
+      overlay("EMBERLINE DEFENSE","Hold the winding road through ten waves.");
+      wrap("Build with the buttons or keys 1–4. Click a tower to upgrade or sell it. Continuous fire builds heat; overheated towers stop firing until they cool.",
+        275,265,450,23,"#d5e3e8",16);
+      wrap("Every third wave, choose a global modifier. Armor resists ordinary damage, runners are quick, and splitters release two smaller enemies.",
+        275,355,450,23,"#d5e3e8",16);
+      button(390,454,220,48,"Start game",()=>{state.screen="playing";});
+    }
+    if(state.screen==="paused") {
+      overlay("PAUSED","Take a moment to plan your defenses.");
+      button(390,322,220,48,"Resume",()=>{state.screen="playing";});
+      button(390,385,220,48,"Restart",()=>{reset();state.screen="playing";});
+    }
+    if(state.screen==="modifier") {
+      overlay("CHOOSE A MODIFIER",`Wave ${state.wave} cleared. Pick one permanent change.`);
+      state.offered.forEach((m,i)=>{
+        const y=256+i*76;
+        button(263,y,474,66,m.name,()=>{
+          m.apply(state);state.mods.push(m.name);state.screen="playing";
+          message(`${m.name} activated. Prepare for wave ${state.wave+1}.`);
+        });
+        text(m.detail,500,y+47,13,"#b9d0d9","center");
+      });
+    }
+    if(state.screen==="win"||state.screen==="lose") {
+      overlay(state.screen==="win"?"VICTORY":"THE GATE FELL",
+        state.screen==="win"?"The boss is defeated. Emberline stands.":"Rebuild your defenses and try another strategy.");
+      button(390,335,220,50,"Play again",()=>{reset();state.screen="playing";});
+    }
+  }
+  function pointerPosition(ev) {
+    const r=canvas.getBoundingClientRect();
+    return {x:(ev.clientX-r.left)*W/r.width,y:(ev.clientY-r.top)*H/r.height};
+  }
+  canvas.addEventListener("pointermove",ev=>{mouse=pointerPosition(ev);});
+  canvas.addEventListener("pointerdown",ev=>{
+    ev.preventDefault();mouse=pointerPosition(ev);
+    if(ev.button===2) {state.placing=null;return;}
+    for(let i=buttons.length-1;i>=0;i--) {
+      const b=buttons[i];
+      if(mouse.x>=b.x&&mouse.x<=b.x+b.w&&mouse.y>=b.y&&mouse.y<=b.y+b.h) {
+        if(b.enabled)b.action();return;
+      }
+    }
+    if(state.screen!=="playing"||mouse.x>=FIELD)return;
+    if(state.placing!==null) {
+      const cost=towerCost(state.placing);
+      if(state.gold<cost){message("Not enough gold.");return;}
+      if(!canPlace(mouse.x,mouse.y)){message("Build on clear ground away from the road.");return;}
+      state.gold-=cost;
+      state.towers.push({x:mouse.x,y:mouse.y,type:state.placing,level:0,
+        heat:0,cooldown:0,overheated:false,spent:cost});
+      burst(mouse.x,mouse.y,TYPES[state.placing].color,8);
+      return;
+    }
+    state.selected=state.towers.slice().reverse().find(t=>distance(t,mouse)<22)||null;
+  });
+  canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
+  window.addEventListener("keydown",ev=>{
+    if(ev.key==="Escape"){state.placing=null;state.selected=null;}
+    if(ev.key.toLowerCase()==="p"){
+      if(state.screen==="playing")state.screen="paused";
+      else if(state.screen==="paused")state.screen="playing";
+    }
+    if(state.screen==="playing"&&/^[1-4]$/.test(ev.key)) {
+      state.placing=Number(ev.key)-1;state.selected=null;
+    }
+    if(ev.code==="Space"&&state.screen==="playing"){
+      ev.preventDefault();if(!state.waveActive)startWave();
+    }
+  });
+  function fit() {
+    const scale=Math.min(innerWidth/W,innerHeight/H);
+    canvas.style.width=`${W*scale}px`;
+    canvas.style.height=`${H*scale}px`;
+  }
+  window.addEventListener("resize",fit);fit();
+  function frame(now) {
+    const dt=Math.min((now-last)/1000||0,.05);last=now;
+    update(dt);draw();requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

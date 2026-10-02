@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Benchmarks</title>
+<meta name="description" content="Two single-file HTML5 game prompts, each built by six AI models. Play them side by side.">
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --surface: #ffffff;
+    --border: #e2dfd6;
+    --text: #1f1d1a;
+    --muted: #6b665c;
+    --accent: #c2410c;
+    --accent-soft: #fdeee4;
+    --wind: #0e7490;
+    --wind-soft: #e0f2f5;
+    --code-bg: #f1efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151413;
+      --surface: #1e1c1a;
+      --border: #34312c;
+      --text: #ece9e3;
+      --muted: #a39d92;
+      --accent: #fb923c;
+      --accent-soft: #3a2416;
+      --wind: #5ec8db;
+      --wind-soft: #15303a;
+      --code-bg: #262320;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 48px 16px 64px; }
+  header h1 { font-size: 2rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+  header p { margin: 0; color: var(--muted); max-width: 62ch; }
+
+  section.bench { margin-top: 48px; }
+  .bench-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin-bottom: 6px; }
+  .bench-head h2 { margin: 0; font-size: 1.4rem; }
+  .tag {
+    font-size: 0.78rem; font-weight: 600; padding: 2px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .wind .tag { background: var(--wind-soft); color: var(--wind); }
+  .bench > p { margin: 0 0 14px; color: var(--muted); max-width: 70ch; }
+
+  details.prompt {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 18px;
+  }
+  details.prompt summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 0.92rem; }
+  details.prompt pre {
+    margin: 0; padding: 14px; border-top: 1px solid var(--border);
+    background: var(--code-bg); border-radius: 0 0 10px 10px;
+    white-space: pre-wrap; word-wrap: break-word;
+    font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    max-height: 420px; overflow: auto;
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  a.card {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 16px; border-radius: 10px; text-decoration: none; color: inherit;
+    background: var(--surface); border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .wind a.card { border-top-color: var(--wind); }
+  a.card:hover, a.card:focus-visible { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.08); outline: none; }
+  .card .game { font-size: 1.08rem; font-weight: 650; }
+  .card .model { font-size: 0.88rem; color: var(--muted); }
+  .card .play { margin-top: 8px; font-size: 0.85rem; font-weight: 600; color: var(--accent); }
+  .wind .card .play { color: var(--wind); }
+
+  footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Game Benchmarks</h1>
+    <p>Two game-building prompts, each given to six AI models. Each model returned one self-contained HTML file with no external assets. Pick a card to play that model's game.</p>
+  </header>
+
+  <section class="bench td">
+    <div class="bench-head">
+      <h2>Tower Defense</h2>
+      <span class="tag">Detailed spec</span>
+    </div>
+    <p>A full spec: 4+ tower types with upgrades, 3+ enemy types, 10 waves with a boss, towers that overheat, and a global modifier pick every 3 waves.</p>
+    <details class="prompt">
+      <summary>Show the prompt</summary>
+<pre># Tower Defense Benchmark Prompt
+
+Build a complete, single-file HTML5 canvas tower defense game. Use no external assets or libraries. Draw all graphics in code.
+
+## Required features
+
+- **Path:** a non-straight path, with enemies following it via waypoints.
+- **Towers:** at least 4 tower types with distinct mechanics, not just different damage numbers. Each tower has 2 upgrade levels.
+- **Enemies:** at least 3 enemy types that each demand a different counter (e.g. armored, fast, splits on death).
+- **Waves:** 10 waves with escalating difficulty and a boss on wave 10.
+- **Economy:** a gold economy and lives. Towers can be sold back at a partial refund.
+- **Twist 1, overheating:** towers overheat if they fire continuously and must cool down, so placement and spacing matter.
+- **Twist 2, modifiers:** every 3 waves, the player chooses one of 3 random global modifiers. Some are purely beneficial and some are trade-offs.
+- **Game flow:** a start screen, pause, win and lose screens, and restart without a page reload.
+
+## Design goals
+
+- The game should be winnable but not trivial on the first try.
+- Prioritize game feel: visible feedback on hits, clear range indicators when placing or selecting towers, and a readable UI showing gold, lives, wave, and tower heat.
+- Towers, enemies, and modifiers should create meaningful strategic choices. Avoid options that are strictly better or worse than others.
+
+## Output
+
+Return the entire game as one HTML file in a single code block, ready to save and open in a browser.</pre>
+    </details>
+    <div class="grid">
+      <a class="card" href="tower-defense/opus5.5-bench/"><span class="game">Thermal Siege</span><span class="model">Claude Opus 5.5</span><span class="play">Play →</span></a>
+      <a class="card" href="tower-defense/sonnet5.5-bench/"><span class="game">Meltdown Defense</span><span class="model">Claude Sonnet 5.5</span><span class="play">Play →</span></a>
+      <a class="card" href="tower-defense/copilot-GPT6.0-bench/"><span class="game">Emberline Defense</span><span class="model">GPT-6.0 (via Copilot)</span><span class="play">Play →</span></a>
+      <a class="card" href="tower-defense/copilot-GPT5.6-bench/"><span class="game">Overheat Defense</span><span class="model">GPT-5.6 (via Copilot)</span><span class="play">Play →</span></a>
+      <a class="card" href="tower-defense/gemma4-bench/"><span class="game">Tower Defense Benchmark</span><span class="model">Gemma 4</span><span class="play">Play →</span></a>
+      <a class="card" href="tower-defense/qwen3.8-bench/"><span class="game">Tower Defense</span><span class="model">Qwen 3.8</span><span class="play">Play →</span></a>
+    </div>
+  </section>
+
+  <section class="bench wind">
+    <div class="bench-head">
+      <h2>You Are the Wind</h2>
+      <span class="tag">Open-ended</span>
+    </div>
+    <p>A short, open-ended prompt. Each model had to invent its own goal, lose condition, and a mechanic that only works because the player is the wind.</p>
+    <details class="prompt">
+      <summary>Show the prompt</summary>
+<pre>Make a single-file HTML5 canvas game where the player controls the wind, not a character. Invent what the wind affects, the goal, the lose condition, and one mechanic that only makes sense because you're the wind. No external assets. It should be fun for 2 minutes.</pre>
+    </details>
+    <div class="grid">
+      <a class="card" href="wind/opus5.5-bench/"><span class="game">Windborne</span><span class="model">Claude Opus 5.5</span><span class="play">Play →</span></a>
+      <a class="card" href="wind/sonnet5.5-bench/"><span class="game">Wind Shepherd</span><span class="model">Claude Sonnet 5.5</span><span class="play">Play →</span></a>
+      <a class="card" href="wind/copilot-GPT6.0-bench/"><span class="game">Windward</span><span class="model">GPT-6.0 (via Copilot)</span><span class="play">Play →</span></a>
+      <a class="card" href="wind/copilot-GPT5.6-bench/"><span class="game">Gustkeeper</span><span class="model">GPT-5.6 (via Copilot)</span><span class="play">Play →</span></a>
+      <a class="card" href="wind/gemma4-bench/"><span class="game">Zephyr's Path</span><span class="model">Gemma 4</span><span class="play">Play →</span></a>
+      <a class="card" href="wind/qwen3.8-bench/"><span class="game">GUST</span><span class="model">Qwen 3.8</span><span class="play">Play →</span></a>
+    </div>
+  </section>
+
+  <footer>Every game is a single self-contained HTML file. The prompt for each one is saved next to it as prompt.md.</footer>
+</main>
+</body>
+</html>

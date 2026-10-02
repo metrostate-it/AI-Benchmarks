@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Gustkeeper</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box} html,body{margin:0;height:100%;overflow:hidden;background:#07131d;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none;cursor:crosshair}
+  #help{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 14px;border:1px solid #ffffff25;border-radius:99px;background:#061018aa;color:#dff8ff;font-size:13px;pointer-events:none;backdrop-filter:blur(8px);white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas><div id="help">Drag / WASD: blow &nbsp; • &nbsp; Circle quickly: make a vortex &nbsp; • &nbsp; R: restart</div>
+<script>
+'use strict';
+const C=document.querySelector('#game'), X=C.getContext('2d'), help=document.querySelector('#help');
+let W,H,D=Math.min(devicePixelRatio||1,2), state, last=0, keys={}, pointer={x:0,y:0,px:0,py:0,down:false}, trail=[];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), rnd=(a,b)=>a+Math.random()*(b-a);
+function resize(){W=innerWidth;H=innerHeight;C.width=W*D;C.height=H*D;X.setTransform(D,0,0,D,0,0); if(!pointer.x){pointer.x=W/2;pointer.y=H/2}}
+addEventListener('resize',resize); resize();
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=1;if(e.key.toLowerCase()==='r')reset()});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
+function pos(e){let r=C.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
+C.addEventListener('pointerdown',e=>{pointer.down=true;let p=pos(e);pointer.x=pointer.px=p.x;pointer.y=pointer.py=p.y;trail=[];C.setPointerCapture(e.pointerId)});
+C.addEventListener('pointermove',e=>{let p=pos(e);pointer.px=pointer.x;pointer.py=pointer.y;pointer.x=p.x;pointer.y=p.y});
+C.addEventListener('pointerup',()=>{pointer.down=false;trail=[]});
+function flower(){let side=Math.floor(Math.random()*4),m=55,x,y;if(side===0){x=rnd(m,W-m);y=m}else if(side===1){x=W-m;y=rnd(m,H-m)}else if(side===2){x=rnd(m,W-m);y=H-m}else{x=m;y=rnd(m,H-m)}return{x,y,r:20,pollen:0,hp:1,phase:rnd(0,6.28)}}
+function reset(){
+ state={t:120,score:0,combo:0,health:100,over:false,won:false,flowers:Array.from({length:7},flower),pollen:[],seeds:[],storms:[],particles:[],spawn:2,message:'Carry pollen between flowers. Bloom all seven!',msgT:4,vortexCd:0};
+ state.flowers[0].pollen=1; for(let i=0;i<35;i++)state.particles.push({x:rnd(0,W),y:rnd(0,H),vx:0,vy:0,a:rnd(.15,.5)});
+}
+function wind(dt){let wx=0,wy=0;if(keys.a||keys.arrowleft)wx--;if(keys.d||keys.arrowright)wx++;if(keys.w||keys.arrowup)wy--;if(keys.s||keys.arrowdown)wy++;if(pointer.down){wx+=(pointer.x-pointer.px)*.14;wy+=(pointer.y-pointer.py)*.14;trail.push({x:pointer.x,y:pointer.y,t:performance.now()});trail=trail.filter(p=>performance.now()-p.t<650)}let l=Math.hypot(wx,wy);if(l>0){wx=wx/l*220;wy=wy/l*220}return{wx,wy}}
+function makeVortex(){if(state.vortexCd>0||trail.length<10)return;let turns=0;for(let i=2;i<trail.length;i++){let a=Math.atan2(trail[i-1].y-trail[i-2].y,trail[i-1].x-trail[i-2].x),b=Math.atan2(trail[i].y-trail[i-1].y,trail[i].x-trail[i-1].x),d=b-a;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;turns+=d}if(Math.abs(turns)>Math.PI*1.55){state.vortexCd=5;trail=[];for(let i=0;i<22;i++)state.seeds.push({x:pointer.x+rnd(-18,18),y:pointer.y+rnd(-18,18),vx:rnd(-80,80),vy:rnd(-80,80),life:4});state.message='VORTEX! Seeds released!';state.msgT=1.4}}
+function update(dt){if(state.over)return;state.t-=dt;state.spawn-=dt;state.vortexCd=Math.max(0,state.vortexCd-dt);state.msgT-=dt;if(state.t<=0){state.over=true;state.won=state.flowers.every(f=>f.pollen>=1)}let {wx,wy}=wind(dt);makeVortex();
+ if(state.spawn<=0){state.spawn=rnd(5,8);let y=rnd(60,H-60);state.storms.push({x:W+45,y,r:rnd(30,48),vx:rnd(-100,-65),life:18})}
+ for(const f of state.flowers)if(f.pollen>=1&&Math.random()<dt*.9)state.pollen.push({x:f.x,y:f.y,vx:rnd(-20,20),vy:rnd(-20,20),life:8,home:f});
+ const all=[...state.pollen,...state.seeds,...state.particles];for(const p of all){let dx=pointer.x-p.x,dy=pointer.y-p.y,d=Math.hypot(dx,dy)||1,boost=pointer.down?clamp(180/d,0,2):0;p.vx=(p.vx||0)+wx*dt*(.55+boost);p.vy=(p.vy||0)+wy*dt*(.55+boost);p.vx*=Math.pow(.3,dt);p.vy*=Math.pow(.3,dt);p.x+=p.vx*dt;p.y+=p.vy*dt;if(p.x<0)p.x=W;if(p.x>W)p.x=0;if(p.y<0)p.y=H;if(p.y>H)p.y=0}
+ for(const p of state.pollen){p.life-=dt;for(const f of state.flowers)if(f!==p.home&&Math.hypot(p.x-f.x,p.y-f.y)<f.r+7&&f.pollen<1){f.pollen=1;p.life=0;state.score+=100+state.combo*25;state.combo++;state.message='Bloom chain x'+state.combo+'!';state.msgT=1.1}}
+ for(const s of state.seeds){s.life-=dt;for(const storm of state.storms)if(Math.hypot(s.x-storm.x,s.y-storm.y)<storm.r){storm.life=0;s.life=0;state.score+=40}}
+ state.pollen=state.pollen.filter(p=>p.life>0);state.seeds=state.seeds.filter(p=>p.life>0);
+ for(const s of state.storms){s.x+=s.vx*dt;s.life-=dt;if(s.x<20&&s.life>0){s.life=0;state.health-=18;state.combo=0;state.message='Storm hit the garden!';state.msgT=1.2}}
+ state.storms=state.storms.filter(s=>s.life>0&&s.x>-60);if(state.health<=0){state.over=true;state.won=false}if(state.flowers.every(f=>f.pollen>=1)){state.over=true;state.won=true;state.score+=Math.ceil(state.t)*10}}
+function circle(x,y,r,fill){X.beginPath();X.arc(x,y,r,0,7);X.fillStyle=fill;X.fill()}
+function draw(){let g=X.createLinearGradient(0,0,0,H);g.addColorStop(0,'#09283a');g.addColorStop(1,'#07141e');X.fillStyle=g;X.fillRect(0,0,W,H);
+ X.strokeStyle='#74d9e725';X.lineWidth=1;for(let x=40;x<W;x+=80){X.beginPath();X.moveTo(x,0);X.lineTo(x-80,H);X.stroke()}
+ for(const p of state.particles){X.strokeStyle=`rgba(160,239,255,${p.a})`;X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-(p.vx||0)*.08,p.y-(p.vy||0)*.08);X.stroke()}
+ for(const f of state.flowers){let bloom=f.pollen>=1;for(let i=0;i<6;i++){let a=i*Math.PI/3+f.phase,px=f.x+Math.cos(a)*13,py=f.y+Math.sin(a)*13;circle(px,py,bloom?10:7,bloom?'#ffcf5c':'#52717a')}circle(f.x,f.y,7,bloom?'#fff3a1':'#294651')}
+ for(const p of state.pollen){circle(p.x,p.y,3,'#ffe87a');X.shadowBlur=10;X.shadowColor='#ffe87a'}X.shadowBlur=0;
+ for(const s of state.seeds)circle(s.x,s.y,3,'#a7ffbb');
+ for(const s of state.storms){let rg=X.createRadialGradient(s.x,s.y,2,s.x,s.y,s.r);rg.addColorStop(0,'#fc557dcc');rg.addColorStop(1,'#48253a00');circle(s.x,s.y,s.r,rg);X.strokeStyle='#ff6688';X.lineWidth=3;X.beginPath();X.arc(s.x,s.y,s.r*.62,0,5);X.stroke()}
+ if(pointer.down){X.strokeStyle='#baf6ff88';X.lineWidth=2;X.beginPath();for(let i=0;i<trail.length;i++)i?X.lineTo(trail[i].x,trail[i].y):X.moveTo(trail[i].x,trail[i].y);X.stroke();circle(pointer.x,pointer.y,8,'#d8fbff88')}
+ X.fillStyle='#e9fbff';X.font='700 20px system-ui';X.fillText('GUSTKEEPER',20,31);X.font='14px system-ui';X.fillStyle='#b9dce5';X.fillText(`Time ${Math.max(0,Math.ceil(state.t))}s   Score ${state.score}   Garden ${Math.max(0,state.health)}%`,20,54);
+ let n=state.flowers.filter(f=>f.pollen>=1).length;X.fillStyle='#183846';X.fillRect(20,66,220,7);X.fillStyle='#ffcf5c';X.fillRect(20,66,220*n/7,7);X.fillStyle='#b9dce5';X.font='12px system-ui';X.fillText(`${n}/7 flowers bloomed`,20,90);if(state.vortexCd>0)X.fillText(`Vortex recharging ${state.vortexCd.toFixed(1)}s`,20,108);
+ if(state.msgT>0){X.textAlign='center';X.font='700 18px system-ui';X.fillStyle='#fff';X.fillText(state.message,W/2,45);X.textAlign='left'}
+ if(state.over){X.fillStyle='#031018dd';X.fillRect(0,0,W,H);X.textAlign='center';X.fillStyle=state.won?'#ffdd70':'#ff7192';X.font='800 48px system-ui';X.fillText(state.won?'THE GARDEN SINGS':'THE GARDEN FELL',W/2,H/2-35);X.fillStyle='#dff8ff';X.font='20px system-ui';X.fillText(`Score ${state.score} • Press R or tap to ride again`,W/2,H/2+10);X.font='14px system-ui';X.fillStyle='#9fc5cf';X.fillText('Tip: loop the pointer fast to summon seed-shredding vortices.',W/2,H/2+42);X.textAlign='left'}}
+C.addEventListener('click',()=>{if(state.over)reset()});
+function loop(t){let dt=Math.min((t-last)/1000,.033)||0;last=t;update(dt);draw();requestAnimationFrame(loop)}reset();requestAnimationFrame(loop);
+</script>
+</body></html>

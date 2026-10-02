@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Wind Shepherd</title>
+<style>
+  html,body{margin:0;height:100%;background:#10202e;overflow:hidden;touch-action:none;user-select:none}
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(() => {
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let W, H, DPR, GROUND;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  GROUND = H - 50;
+}
+addEventListener('resize', resize); resize();
+
+const rand = (a, b) => a + Math.random() * (b - a);
+let best = 0;
+try { best = +localStorage.getItem('windShepherdBest') || 0; } catch (e) {}
+
+// ---- state ----
+let state = 'title', t, score, lives, combo, breath, seeds, currents, patches, dust, fx, spawnTimer, shake, flash;
+const MAX_BREATH = 100;
+
+function reset() {
+  t = 0; score = 0; lives = 5; combo = 0; breath = MAX_BREATH;
+  seeds = []; currents = []; fx = []; spawnTimer = 0.5; shake = 0; flash = 0;
+  patches = [];
+  for (let i = 0; i < 3; i++) patches.push(newPatch(i));
+  dust = Array.from({ length: 140 }, () => ({ x: rand(0, W), y: rand(0, GROUND), vx: 0, vy: 0 }));
+}
+function patchWidth() { return Math.max(60, 120 - t * 0.6); }
+function newPatch(i) {
+  // keep patches spread across thirds of the screen
+  const seg = W / 3, w = patchWidth();
+  return { x: seg * i + rand(w / 2 + 10, seg - w / 2 - 10), w, state: 'soil', timer: 0, grow: 0 };
+}
+
+// ---- input: you are the wind ----
+const ptr = { x: 0, y: 0, down: false, lx: 0, ly: 0, acc: 0 };
+function pos(e) { return [e.clientX, e.clientY]; }
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  [ptr.x, ptr.y] = pos(e); ptr.lx = ptr.x; ptr.ly = ptr.y; ptr.down = true; ptr.acc = 0;
+  if (state !== 'play' && (state === 'title' || t_over > 0.8)) { reset(); state = 'play'; }
+});
+cv.addEventListener('pointermove', e => {
+  [ptr.x, ptr.y] = pos(e);
+  if (!ptr.down || state !== 'play') { ptr.lx = ptr.x; ptr.ly = ptr.y; return; }
+  const dx = ptr.x - ptr.lx, dy = ptr.y - ptr.ly, d = Math.hypot(dx, dy);
+  ptr.acc += d;
+  if (d > 0.5) {
+    // lay down a lingering current along the stroke; costs breath
+    const step = 14;
+    while (ptr.acc >= step) {
+      ptr.acc -= step;
+      if (breath <= 0) break;
+      const sp = Math.min(520, d * 60 + 80);
+      currents.push({ x: ptr.x, y: ptr.y, vx: dx / d * sp, vy: dy / d * sp, life: 1, r: 95 });
+      breath -= 1.1;
+    }
+  }
+  ptr.lx = ptr.x; ptr.ly = ptr.y;
+});
+const up = () => { ptr.down = false; };
+cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+let t_over = 0;
+
+// ---- the wind field ----
+let amb = { x: 0, y: 0 };
+function windAt(x, y, out) {
+  let fx_ = amb.x, fy_ = amb.y, wsum = 0;
+  let cx = 0, cy = 0;
+  for (const c of currents) {
+    const dx = x - c.x, dy = y - c.y, d2 = dx * dx + dy * dy, r = c.r;
+    if (d2 < r * r) {
+      const w = (1 - Math.sqrt(d2) / r) * c.life;
+      cx += c.vx * w; cy += c.vy * w; wsum += w;
+    }
+  }
+  const k = Math.min(1, wsum);
+  out.x = cx / (wsum || 1) * k + fx_ * (1 - k * 0.5);
+  out.y = cy / (wsum || 1) * k + fy_ * (1 - k * 0.5);
+  out.k = k;
+}
+const tmp = { x: 0, y: 0, k: 0 };
+
+// ---- spawning ----
+function spawnSeed() {
+  seeds.push({
+    x: rand(60, W - 60), y: -20, vx: rand(-20, 20), vy: 20,
+    rot: rand(0, 6.28), phase: rand(0, 6.28), alive: true, trail: []
+  });
+}
+
+function burst(x, y, col, n, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, 6.28), s = rand(0.3, 1) * spd;
+    fx.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - spd * 0.3, life: rand(0.5, 1), col, g: 120 });
+  }
+}
+function popText(x, y, text, col) { fx.push({ x, y, vx: 0, vy: -40, life: 1.2, text, col, g: 0 }); }
+
+// ---- update ----
+function update(dt) {
+  if (state === 'over') t_over += dt;
+  if (state !== 'play') { ambient(dt); return; }
+  t += dt;
+  // ambient crosswind grows with time
+  const A = Math.min(70, 10 + t * 0.9);
+  amb.x = Math.sin(t * 0.35) * A + Math.sin(t * 1.1 + 2) * A * 0.4;
+  amb.y = Math.sin(t * 0.5 + 1) * A * 0.2;
+
+  // breath regenerates faster when not blowing
+  breath = Math.min(MAX_BREATH, breath + (ptr.down ? 9 : 26) * dt);
+
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnSeed();
+    if (t > 40 && Math.random() < 0.3) spawnSeed();
+    spawnTimer = Math.max(0.8, 2.6 - t * 0.016);
+  }
+
+  for (const c of currents) { c.life -= dt / 2.4; c.x += c.vx * dt * 0.25; c.y += c.vy * dt * 0.25; }
+  currents = currents.filter(c => c.life > 0);
+
+  for (const s of seeds) {
+    windAt(s.x, s.y, tmp);
+    // seeds relax toward the local wind velocity; weak gravity gives a slow fall
+    const grip = 3.2;
+    s.vx += (tmp.x - s.vx) * grip * dt * (0.4 + tmp.k * 0.6);
+    s.vy += (tmp.y - s.vy) * grip * dt * (0.4 + tmp.k * 0.6);
+    s.vy += 34 * dt;
+    s.vy -= Math.min(0, s.vy) * 0; // placeholder for symmetry
+    const drag = Math.exp(-0.5 * dt);
+    s.vx *= drag; s.vy *= drag;
+    s.vy = Math.min(s.vy, 70 + tmp.k * 120);
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    s.rot += s.vx * 0.004 * dt * 60 * 0.1 + dt;
+    s.trail.push([s.x, s.y]); if (s.trail.length > 10) s.trail.shift();
+    if (s.y < -80) s.y = -80;
+
+    if (s.x < -30 || s.x > W + 30) { lose(s, 'blown away'); continue; }
+    if (s.y >= GROUND - 4) land(s);
+  }
+  seeds = seeds.filter(s => s.alive);
+
+  for (const p of patches) {
+    if (p.state === 'bloom') {
+      p.grow = Math.min(1, p.grow + dt * 1.5); p.timer -= dt;
+      if (p.timer <= 0) { p.state = 'soil'; p.w = patchWidth(); p.x = relocate(p); p.grow = 0; }
+    }
+  }
+  shake = Math.max(0, shake - dt * 20); flash = Math.max(0, flash - dt * 3);
+  ambient(dt);
+}
+
+function relocate(p) {
+  for (let tries = 0; tries < 20; tries++) {
+    const x = rand(p.w / 2 + 10, W - p.w / 2 - 10);
+    if (patches.every(o => o === p || Math.abs(o.x - x) > (o.w + p.w) / 2 + 30)) return x;
+  }
+  return p.x;
+}
+
+function land(s) {
+  s.alive = false;
+  const p = patches.find(p => p.state === 'soil' && Math.abs(s.x - p.x) < p.w / 2);
+  if (p) {
+    combo++;
+    const pts = 10 * Math.min(combo, 8);
+    score += pts;
+    p.state = 'bloom'; p.timer = 3; p.grow = 0;
+    burst(s.x, GROUND, '#ffd95a', 18, 140);
+    popText(s.x, GROUND - 30, '+' + pts + (combo > 1 ? '  x' + combo : ''), '#ffe98a');
+    if (combo % 5 === 0 && lives < 5) { lives++; popText(s.x, GROUND - 60, '+1 life', '#9dffb0'); }
+  } else {
+    lose(s, 'barren');
+  }
+}
+function lose(s, why) {
+  s.alive = false; combo = 0; lives--; shake = 8; flash = 1;
+  burst(Math.max(0, Math.min(W, s.x)), Math.min(s.y, GROUND), '#8a8f96', 12, 90);
+  popText(Math.max(40, Math.min(W - 40, s.x)), Math.min(s.y, GROUND) - 20, why, '#ff9a8a');
+  if (lives <= 0) {
+    state = 'over'; t_over = 0;
+    if (score > best) { best = score; try { localStorage.setItem('windShepherdBest', best); } catch (e) {} }
+  }
+}
+
+function ambient(dt) {
+  for (const d of dust) {
+    windAt(d.x, d.y, tmp);
+    d.vx += (tmp.x - d.vx) * 2 * dt; d.vy += (tmp.y - d.vy) * 2 * dt;
+    d.x += d.vx * dt; d.y += d.vy * dt;
+    if (d.x < 0) d.x += W; if (d.x > W) d.x -= W;
+    if (d.y < 0) d.y += GROUND; if (d.y > GROUND) d.y -= GROUND;
+  }
+  for (const f of fx) { f.life -= dt; f.x += f.vx * dt; f.y += f.vy * dt; f.vy += f.g * dt; }
+  fx = fx.filter(f => f.life > 0);
+  if (state !== 'play') currents = currents.filter(c => (c.life -= dt / 2.4) > 0);
+}
+
+// ---- draw ----
+function drawSeed(s) {
+  ctx.save(); ctx.translate(s.x, s.y);
+  const ang = Math.atan2(s.vy, s.vx) * 0.0 + Math.sin(s.phase + t * 3) * 0.2 + Math.max(-0.6, Math.min(0.6, s.vx * 0.004));
+  ctx.rotate(ang);
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = -4; i <= 4; i++) { ctx.moveTo(0, 6); ctx.lineTo(i * 3.2, -9 + Math.abs(i) * 1.2); }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.95)';
+  for (let i = -4; i <= 4; i++) { ctx.beginPath(); ctx.arc(i * 3.2, -9 + Math.abs(i) * 1.2, 1.6, 0, 6.3); ctx.fill(); }
+  ctx.fillStyle = '#b98a4b'; ctx.fillRect(-1.5, 5, 3, 8);
+  ctx.restore();
+}
+
+function draw() {
+  ctx.save();
+  if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
+  // sky
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#16324a'); g.addColorStop(0.7, '#4f7f9c'); g.addColorStop(1, '#a9c8cf');
+  ctx.fillStyle = g; ctx.fillRect(-20, -20, W + 40, H + 40);
+
+  // ground
+  ctx.fillStyle = '#6d6a66'; ctx.fillRect(-20, GROUND, W + 40, H - GROUND + 20);
+  ctx.fillStyle = '#85817b';
+  for (let x = 0; x < W; x += 38) ctx.fillRect(x + (x * 7 % 13), GROUND + 4 + (x * 3 % 9), 14, 5);
+  for (const p of patches) {
+    ctx.fillStyle = '#4a2f1d';
+    ctx.beginPath(); ctx.roundRect(p.x - p.w / 2, GROUND - 3, p.w, H - GROUND + 20, 8); ctx.fill();
+    ctx.fillStyle = '#3d7a3a';
+    ctx.fillRect(p.x - p.w / 2 + 3, GROUND - 6, p.w - 6, 5);
+    if (p.state === 'soil') {
+      // glowing beacon so you can find the target
+      const pulse = 0.5 + 0.5 * Math.sin((t || 0) * 4);
+      ctx.fillStyle = `rgba(160,255,150,${0.12 + pulse * 0.12})`;
+      ctx.beginPath(); ctx.moveTo(p.x - p.w / 2, GROUND - 6); ctx.lineTo(p.x + p.w / 2, GROUND - 6);
+      ctx.lineTo(p.x + p.w / 2 + 14, GROUND - 90); ctx.lineTo(p.x - p.w / 2 - 14, GROUND - 90); ctx.fill();
+    } else {
+      const h = 46 * p.grow;
+      ctx.strokeStyle = '#4caf50'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(p.x, GROUND - 4); ctx.quadraticCurveTo(p.x + 6, GROUND - h / 2, p.x, GROUND - h); ctx.stroke();
+      ctx.fillStyle = '#ff7eb6';
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * 6.283;
+        ctx.beginPath(); ctx.arc(p.x + Math.cos(a) * 8 * p.grow, GROUND - h + Math.sin(a) * 8 * p.grow, 6 * p.grow, 0, 6.3); ctx.fill();
+      }
+      ctx.fillStyle = '#ffe36b'; ctx.beginPath(); ctx.arc(p.x, GROUND - h, 5 * p.grow, 0, 6.3); ctx.fill();
+    }
+  }
+
+  // wind currents (streaks)
+  ctx.lineCap = 'round';
+  for (const c of currents) {
+    const sp = Math.hypot(c.vx, c.vy) || 1, L = 26 * c.life + 6;
+    ctx.strokeStyle = `rgba(230,250,255,${0.28 * c.life})`;
+    ctx.lineWidth = 2 + 3 * c.life;
+    ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c.x + c.vx / sp * L, c.y + c.vy / sp * L); ctx.stroke();
+  }
+  // dust moving in the field shows the wind
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  for (const d of dust) {
+    const sp = Math.hypot(d.vx, d.vy);
+    ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.5, 0.1 + sp / 400)})`; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.vx * 0.06, d.y - d.vy * 0.06); ctx.stroke();
+  }
+
+  // seeds
+  for (const s of seeds) {
+    ctx.strokeStyle = 'rgba(255,255,255,.15)'; ctx.lineWidth = 2; ctx.beginPath();
+    s.trail.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+    drawSeed(s);
+  }
+  // particles / text
+  for (const f of fx) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, f.life));
+    if (f.text) { ctx.fillStyle = f.col; ctx.font = 'bold 20px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y); }
+    else { ctx.fillStyle = f.col; ctx.fillRect(f.x - 2, f.y - 2, 4, 4); }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  if (flash > 0) { ctx.fillStyle = `rgba(255,60,60,${flash * 0.25})`; ctx.fillRect(0, 0, W, H); }
+
+  // pointer: wind cursor
+  if (state === 'play') {
+    ctx.strokeStyle = ptr.down ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.4)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(ptr.x, ptr.y, 18, 0, 6.3); ctx.stroke();
+  }
+
+  hud();
+}
+
+function hud() {
+  ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui,sans-serif';
+  if (state === 'play' || state === 'over') {
+    ctx.fillText('Score ' + score, 18, 34);
+    ctx.font = '14px system-ui,sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.fillText('Best ' + best + (combo > 1 ? '   Combo x' + combo : ''), 18, 56);
+    // lives as seeds
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i < lives ? '#fff' : 'rgba(255,255,255,.2)';
+      ctx.beginPath(); ctx.arc(W - 24 - i * 24, 28, 8, 0, 6.3); ctx.fill();
+    }
+    // breath bar
+    const bw = 160, bx = W / 2 - bw / 2;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(bx, 20, bw, 10);
+    ctx.fillStyle = breath < 15 ? '#ff9a8a' : '#bfe9ff'; ctx.fillRect(bx, 20, bw * breath / MAX_BREATH, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = '11px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('BREATH', W / 2, 46);
+  }
+  if (state === 'title' || state === 'over') {
+    ctx.fillStyle = 'rgba(8,20,30,.62)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    if (state === 'title') {
+      ctx.font = 'bold 54px system-ui,sans-serif'; ctx.fillText('Wind Shepherd', W / 2, H / 2 - 90);
+      ctx.font = '18px system-ui,sans-serif'; ctx.fillStyle = '#dff3ff';
+      const lines = [
+        'You are the wind. Press and drag to blow currents across the sky.',
+        'Currents linger and drift, so you can set a stream up and let it carry seeds.',
+        'Guide the falling dandelion seeds onto the dark soil to make them bloom.',
+        'Seeds that hit bare rock or blow off-screen cost a life. Blowing spends breath.',
+        'Chain blooms for a combo. Soil shrinks and the crosswind grows.'
+      ];
+      lines.forEach((l, i) => ctx.fillText(l, W / 2, H / 2 - 40 + i * 28));
+      ctx.font = 'bold 22px system-ui,sans-serif'; ctx.fillStyle = '#ffe98a';
+      ctx.fillText('Click or tap to begin', W / 2, H / 2 + 130);
+    } else {
+      ctx.font = 'bold 48px system-ui,sans-serif'; ctx.fillText('The meadow is quiet', W / 2, H / 2 - 50);
+      ctx.font = '24px system-ui,sans-serif';
+      ctx.fillText('Score ' + score + (score >= best && score > 0 ? '  (new best!)' : '   Best ' + best), W / 2, H / 2);
+      ctx.fillText('Survived ' + Math.floor(t) + 's', W / 2, H / 2 + 34);
+      if (t_over > 0.8) { ctx.font = 'bold 22px system-ui,sans-serif'; ctx.fillStyle = '#ffe98a'; ctx.fillText('Click or tap to blow again', W / 2, H / 2 + 90); }
+    }
+  }
+}
+
+// ---- loop ----
+reset();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

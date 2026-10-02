@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Windborne</title>
+<style>
+  html,body{margin:0;height:100%;background:#07081a;overflow:hidden}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);touch-action:none;cursor:crosshair;display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+/*  WINDBORNE — you are the wind.
+    Goal:  carry dandelion seeds onto bare soil until 20 flowers bloom at once.
+    Lose:  the burning tree's embers ride the same wind; if the Mother Dandelion overheats, it's over.
+    Wind-only mechanics:
+      - Everything airborne obeys you at once: seeds AND embers. You can't move one without the other.
+      - Hot embers rise; keep them aloft long enough and they cool to harmless ash.
+      - Fire creeps the way you blow. Blow it back over its own ashes and it starves.
+      - Shove two clouds together and they collide into a storm that rains where you steer it.
+      - Press and hold still to calm the air under you.
+*/
+const W = 1280, H = 720, CW = 8, NC = W / CW;
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
+let scale = 1;
+function resize() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  scale = Math.min(innerWidth / W, innerHeight / H);
+  cvs.width = Math.round(W * dpr * scale); cvs.height = Math.round(H * dpr * scale);
+  cvs.style.width = W * scale + 'px'; cvs.style.height = H * scale + 'px';
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const TAU = Math.PI * 2;
+
+// ---------------- terrain ----------------
+const POND = [568, 648];
+function gy(x) {
+  let y = 612 + 16 * Math.sin(x * 0.005 + 0.5) + 9 * Math.sin(x * 0.013 + 2);
+  if (x < 230) y -= (230 - x) * 0.42;
+  y += 34 * Math.exp(-Math.pow((x - 608) / 36, 2));
+  return y;
+}
+const GYc = new Float32Array(NC);
+for (let i = 0; i < NC; i++) GYc[i] = gy(i * CW + CW / 2);
+const WATER_Y = gy(POND[0]) + 3;
+const SOIL = [[200, 280], [370, 450], [690, 780], [860, 940], [1010, 1090]];
+const MX = 74, MBASE = gy(74), MY = MBASE - 118, MR = 34;
+const TX = 1205, TBASE = gy(1205);
+const GOAL = 20;
+
+// distant hills + stars (static)
+const hillPts = [];
+for (let x = 0; x <= W; x += 16) hillPts.push([x, 470 + 40 * Math.sin(x * 0.004 + 1) + 22 * Math.sin(x * 0.011)]);
+const stars = [];
+for (let i = 0; i < 90; i++) stars.push([rand(0, W), rand(0, 300), rand(0.4, 1.4), rand(0, TAU)]);
+
+// burnt tree
+const branches = [], tips = [];
+(function grow(x, y, a, len, w, d) {
+  const x2 = x + Math.cos(a) * len, y2 = y + Math.sin(a) * len;
+  branches.push([x, y, x2, y2, w]);
+  if (d > 0) {
+    grow(x2, y2, a - rand(0.25, 0.6), len * rand(0.62, 0.78), w * 0.66, d - 1);
+    grow(x2, y2, a + rand(0.25, 0.6), len * rand(0.62, 0.78), w * 0.66, d - 1);
+  } else tips.push([x2, y2, rand(0, TAU)]);
+})(TX, TBASE, -Math.PI / 2 - 0.1, 95, 15, 5);
+
+// glow sprite
+const glow = document.createElement('canvas'); glow.width = glow.height = 64;
+{ const g = glow.getContext('2d'), grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,225,150,1)'); grd.addColorStop(0.25, 'rgba(255,150,50,0.55)');
+  grd.addColorStop(1, 'rgba(255,60,0,0)'); g.fillStyle = grd; g.fillRect(0, 0, 64, 64); }
+function drawGlow(x, y, r, a) { ctx.globalAlpha = a; ctx.drawImage(glow, x - r, y - r, r * 2, r * 2); }
+
+// ---------------- wind field ----------------
+const GS = 40, GX = W / GS + 1, GYN = H / GS + 1, GN = GX * GYN;
+const fx = new Float32Array(GN), fy = new Float32Array(GN), tx = new Float32Array(GN), ty = new Float32Array(GN);
+let WX = 0, WY = 0, amb = 0;
+function windAt(x, y) {
+  const gx = clamp(x / GS, 0, GX - 1.001), gyy = clamp(y / GS, 0, GYN - 1.001);
+  const i = gx | 0, j = gyy | 0, u = gx - i, v = gyy - j, a = j * GX + i;
+  WX = (fx[a] * (1 - u) + fx[a + 1] * u) * (1 - v) + (fx[a + GX] * (1 - u) + fx[a + GX + 1] * u) * v + amb;
+  WY = (fy[a] * (1 - u) + fy[a + 1] * u) * (1 - v) + (fy[a + GX] * (1 - u) + fy[a + GX + 1] * u) * v;
+}
+function brush(cx, cy, vx, vy, k) {
+  const R = 125;
+  const i0 = Math.max(0, Math.floor((cx - R) / GS)), i1 = Math.min(GX - 1, Math.ceil((cx + R) / GS));
+  const j0 = Math.max(0, Math.floor((cy - R) / GS)), j1 = Math.min(GYN - 1, Math.ceil((cy + R) / GS));
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const d = Math.hypot(i * GS - cx, j * GS - cy);
+    if (d >= R) continue;
+    let w = 1 - d / R; w = w * w * k;
+    const a = j * GX + i;
+    fx[a] += (vx - fx[a]) * w; fy[a] += (vy - fy[a]) * w;
+  }
+}
+function stepField(dt) {
+  const decay = Math.exp(-0.75 * dt), mix = 1 - Math.exp(-5 * dt);
+  for (let j = 0; j < GYN; j++) for (let i = 0; i < GX; i++) {
+    const a = j * GX + i;
+    const l = i > 0 ? a - 1 : a, r = i < GX - 1 ? a + 1 : a, u = j > 0 ? a - GX : a, d = j < GYN - 1 ? a + GX : a;
+    const ax = (fx[l] + fx[r] + fx[u] + fx[d]) * 0.25, ay = (fy[l] + fy[r] + fy[u] + fy[d]) * 0.25;
+    tx[a] = (fx[a] + (ax - fx[a]) * mix) * decay;
+    ty[a] = (fy[a] + (ay - fy[a]) * mix) * decay;
+  }
+  fx.set(tx); fy.set(ty);
+  // the ground blocks downward wind and deflects it sideways
+  for (let i = 0; i < GX; i++) {
+    const gyl = gy(i * GS);
+    for (let j = 0; j < GYN; j++) {
+      const a = j * GX + i;
+      if (j * GS > gyl - 10 && fy[a] > 0) { fx[a] += fy[a] * 0.3 * Math.sign(fx[a] || 1); fy[a] *= 0.4; }
+    }
+  }
+}
+
+// ---------------- input ----------------
+const ptr = { down: false, x: 0, y: 0, px: 0, py: 0 };
+let gust = 0;
+function toWorld(e) { const r = cvs.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; }
+cvs.addEventListener('pointerdown', e => {
+  initAudio();
+  const [x, y] = toWorld(e);
+  if (state === 'title' || ((state === 'win' || state === 'lose') && endT > 1.2)) { reset(); state = 'play'; return; }
+  ptr.down = true; ptr.x = ptr.px = x; ptr.y = ptr.py = y;
+  try { cvs.setPointerCapture(e.pointerId); } catch (_) {}
+});
+cvs.addEventListener('pointermove', e => { const [x, y] = toWorld(e); ptr.x = x; ptr.y = y; });
+const up = () => { ptr.down = false; };
+cvs.addEventListener('pointerup', up); cvs.addEventListener('pointercancel', up);
+cvs.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') { initAudio(); reset(); state = 'play'; }
+  if ((e.key === ' ' || e.key === 'Enter') && state !== 'play') { initAudio(); reset(); state = 'play'; }
+  if (e.key === 'm' || e.key === 'M') muted = !muted;
+});
+
+// ---------------- audio ----------------
+let AC = null, windGain = null, windFilt = null, noiseBuf = null, muted = false, lastSizzle = 0;
+function initAudio() {
+  if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    const len = AC.sampleRate * 2; noiseBuf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = AC.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    windFilt = AC.createBiquadFilter(); windFilt.type = 'bandpass'; windFilt.frequency.value = 400; windFilt.Q.value = 1.2;
+    windGain = AC.createGain(); windGain.gain.value = 0;
+    src.connect(windFilt); windFilt.connect(windGain); windGain.connect(AC.destination); src.start();
+  } catch (_) { AC = null; }
+}
+function tone(freq, dur, vol, type) {
+  if (!AC || muted) return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'sine'; o.frequency.value = freq;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(dur, vol, ftype, freq) {
+  if (!AC || muted) return;
+  const t = AC.currentTime, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = noiseBuf; f.type = ftype; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  s.connect(f); f.connect(g); g.connect(AC.destination); s.start(t, Math.random()); s.stop(t + dur + 0.05);
+}
+const SCALE = [523.25, 587.33, 659.25, 783.99, 880, 1046.5, 1174.66, 1318.5, 1568, 1760];
+function chime(n) { const f = SCALE[n % SCALE.length]; tone(f, 1.4, 0.12); tone(f * 2, 0.8, 0.04); }
+function thunder() { noise(2.2, 0.7, 'lowpass', 180); noise(0.4, 0.25, 'lowpass', 900); }
+function sizzle() { if (!AC || AC.currentTime - lastSizzle < 0.12) return; lastSizzle = AC.currentTime; noise(0.25, 0.08, 'highpass', 3000); }
+
+// ---------------- game state ----------------
+let state = 'title', T = 0, endT = 0;
+let cells, seeds, embers, clouds, drops, parts, tracers;
+let motherHeat, seedTimer, treeTimer, cloudTimer, flareTimer, blooms, peakBlooms, flash, shake, stats, motherFlame;
+
+function cellAt(x) { return cells[clamp(Math.floor(x / CW), 0, NC - 1)]; }
+function flammable(c) { return c.type === 'g' || (c.type === 's' && c.flower); }
+function canPlant(i) {
+  const c = cells[i];
+  if (!c || c.type !== 's' || c.flower || c.fire > 0) return false;
+  for (let d = -1; d <= 1; d += 2) { const n = cells[i + d]; if (n && n.flower) return false; }
+  return true;
+}
+
+function reset() {
+  T = 0; endT = 0; motherHeat = 0; seedTimer = 0.5; treeTimer = 2.5; cloudTimer = 3; flareTimer = 38;
+  blooms = 0; peakBlooms = 0; flash = 0; shake = 0; motherFlame = 0;
+  stats = { planted: 0, cooled: 0, storms: 0, doused: 0, burned: 0 };
+  fx.fill(0); fy.fill(0);
+  cells = [];
+  for (let i = 0; i < NC; i++) {
+    const x = i * CW + CW / 2;
+    const type = (x >= POND[0] && x < POND[1]) ? 'w' : x > 1150 ? 'r' : SOIL.some(([a, b]) => x >= a && x < b) ? 's' : 'g';
+    cells.push({ type, fire: 0, wet: 0, fert: 0, char: 0, flower: null, h: rand(0.7, 1.3), w: 0 });
+  }
+  seeds = []; embers = []; drops = []; parts = [];
+  clouds = [mkCloud(330, 120, 55), mkCloud(700, 170, 62), mkCloud(1000, 95, 50)];
+  clouds.forEach(c => c.alpha = 1);
+  if (!tracers) { tracers = []; for (let i = 0; i < 240; i++) tracers.push(mkTracer()); }
+}
+function mkCloud(x, y, r) {
+  const puffs = [];
+  const n = 6 + (Math.random() * 3 | 0);
+  for (let i = 0; i < n; i++) { const t = i / (n - 1); puffs.push([(t - 0.5) * r * 1.9, rand(-r * 0.25, r * 0.15) - Math.sin(t * Math.PI) * r * 0.35, r * rand(0.4, 0.62)]); }
+  return { x, y, r, vx: 0, vy: 0, storm: false, rain: 0, alpha: 0, puffs, dying: false, bolt: 0 };
+}
+function mkTracer() { return { x: rand(0, W), y: rand(0, H - 80), hist: [], life: rand(1, 4) }; }
+
+function addPart(type, x, y, vx, vy, life, size, col) { if (parts.length < 900) parts.push({ type, x, y, vx, vy, life, max: life, size, col }); }
+
+function ignite(c) {
+  if (c.fire > 0 || c.wet > 0 || !flammable(c)) return;
+  c.fire = c.type === 'g' ? rand(3, 4.5) : 2.4;
+}
+function spawnEmber(x, y, vx, vy) {
+  if (embers.length > 260) return;
+  const m = rand(7, 10);
+  embers.push({ x, y, vx, vy, heat: m, max: m });
+}
+function spawnSeed(x, y, vx, vy) { if (seeds.length < 160) seeds.push({ x, y, vx, vy, ph: rand(0, TAU), rot: rand(0, TAU) }); }
+
+// ---------------- update ----------------
+function update(dt) {
+  T += dt;
+  amb = -22 - Math.min(40, T * 0.3) + 15 * Math.sin(T * 0.13) + 7 * Math.sin(T * 0.41 + 1);
+
+  // input -> wind
+  let mv = 0;
+  if (ptr.down && state === 'play') {
+    const dx = ptr.x - ptr.px, dy = ptr.y - ptr.py, dist = Math.hypot(dx, dy);
+    let vx = dx / dt, vy = dy / dt; const sp = Math.hypot(vx, vy);
+    if (sp > 1300) { vx *= 1300 / sp; vy *= 1300 / sp; }
+    mv = Math.min(sp, 1300);
+    const steps = Math.max(1, Math.ceil(dist / 18));
+    const k = 1 - Math.pow(1 - 0.42, 1 / steps);
+    for (let s = 1; s <= steps; s++) brush(ptr.px + dx * s / steps, ptr.py + dy * s / steps, vx * 0.75, vy * 0.75, k * Math.min(1, dt * 60));
+  }
+  ptr.px = ptr.x; ptr.py = ptr.y;
+  gust += (mv - gust) * Math.min(1, dt * 6);
+  stepField(dt);
+  if (AC && windGain) {
+    const t = AC.currentTime;
+    windGain.gain.setTargetAtTime(muted ? 0 : 0.025 + Math.min(0.28, gust / 2600), t, 0.08);
+    windFilt.frequency.setTargetAtTime(260 + gust * 0.7, t, 0.1);
+  }
+
+  const playing = state === 'play';
+
+  // tracers
+  for (const p of tracers) {
+    windAt(p.x, p.y);
+    p.x += WX * dt; p.y += WY * dt; p.life -= dt;
+    p.hist.push(p.x, p.y, Math.hypot(WX, WY)); if (p.hist.length > 30) p.hist.splice(0, 3);
+    if (p.life <= 0 || p.x < -20 || p.x > W + 20 || p.y < -20 || p.y > gy(p.x)) { Object.assign(p, mkTracer()); }
+  }
+
+  // mother releases seeds
+  seedTimer -= dt;
+  if (seedTimer <= 0 && motherHeat < 100) {
+    seedTimer = rand(1.0, 1.5);
+    const a = rand(-1.2, 0.6);
+    spawnSeed(MX + Math.cos(a) * MR, MY + Math.sin(a) * MR, rand(10, 45), rand(-30, -5));
+  }
+
+  // tree embers
+  if (playing) {
+    treeTimer -= dt;
+    const rate = 0.55 + T * 0.022;
+    if (treeTimer <= 0) {
+      treeTimer = rand(0.5, 1.5) / rate;
+      const t = tips[Math.random() * tips.length | 0];
+      spawnEmber(t[0], t[1], rand(-70, 10), rand(-70, -20));
+    }
+    flareTimer -= dt;
+    if (flareTimer <= 0) {
+      flareTimer = rand(15, 20);
+      for (let i = 0; i < 6 + T / 15; i++) { const t = tips[Math.random() * tips.length | 0]; spawnEmber(t[0], t[1], rand(-160, 30), rand(-140, -40)); }
+      noise(1.2, 0.35, 'lowpass', 500); shake = 0.4;
+      addPart('text', TX - 40, TBASE - 260, 0, -20, 2, 0, 'FLARE!');
+    }
+  }
+
+  // seeds
+  for (let i = seeds.length - 1; i >= 0; i--) {
+    const s = seeds[i];
+    windAt(s.x, s.y);
+    s.vx += (WX - s.vx) * 3 * dt + Math.sin(T * 3 + s.ph) * 20 * dt;
+    s.vy += (WY - s.vy) * 3 * dt + 90 * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt; s.rot += s.vx * dt * 0.02;
+    const g = gy(s.x);
+    if (s.y >= g - 2) {
+      const ci = clamp(Math.floor(s.x / CW), 0, NC - 1);
+      if (canPlant(ci)) {
+        cells[ci].flower = { g: 0, bloom: false, hue: [330, 50, 280, 15, 200, 0][Math.random() * 6 | 0] + rand(-12, 12), st: rand(4, 7), sw: rand(0, TAU) };
+        stats.planted++; tone(SCALE[stats.planted % 5] / 2, 0.25, 0.05, 'triangle');
+        for (let k = 0; k < 5; k++) addPart('spark', s.x, g - 3, rand(-30, 30), rand(-60, -10), 0.5, 2, '#cfffa0');
+      } else {
+        addPart('fade', s.x, Math.min(s.y, cells[ci].type === 'w' ? WATER_Y : g), 0, 0, 0.8, 0, '');
+      }
+      seeds.splice(i, 1); continue;
+    }
+    if (s.x < -40 || s.x > W + 40 || s.y < -80) seeds.splice(i, 1);
+  }
+
+  // embers
+  for (let i = embers.length - 1; i >= 0; i--) {
+    const e = embers[i];
+    e.heat -= dt;
+    const hf = Math.max(0, e.heat / e.max);
+    windAt(e.x, e.y);
+    e.vx += (WX - e.vx) * 1.6 * dt;
+    e.vy += (WY - e.vy) * 1.6 * dt + (140 - 150 * hf) * dt;
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    if (Math.random() < dt * 8 * hf) addPart('trail', e.x, e.y, 0, 0, 0.35, 1.5, '');
+    if (e.heat <= 0) { stats.cooled++; addPart('smoke', e.x, e.y, 0, -10, 1.2, 3, ''); embers.splice(i, 1); continue; }
+    // mother
+    const dm = Math.hypot(e.x - MX, e.y - MY);
+    if (dm < MR + 6 && playing) {
+      motherHeat += 14 + 12 * hf; shake = 0.25;
+      for (let k = 0; k < 6; k++) addPart('spark', e.x, e.y, rand(-80, 80), rand(-80, 40), 0.5, 2, '#ffb050');
+      noise(0.3, 0.15, 'bandpass', 1200);
+      embers.splice(i, 1); continue;
+    }
+    const g = gy(e.x);
+    if (e.y >= g - 1) {
+      const c = cellAt(e.x);
+      if (c.type === 'w' && e.y >= WATER_Y - 1) { for (let k = 0; k < 4; k++) addPart('steam', e.x, WATER_Y, rand(-15, 15), rand(-50, -20), 0.9, 4, ''); sizzle(); }
+      else if (playing && Math.random() < 0.45 + 0.55 * hf) ignite(c);
+      embers.splice(i, 1); continue;
+    }
+    if (e.x < -40 || e.x > W + 40 || e.y < -120) embers.splice(i, 1);
+  }
+
+  // cells: fire, growth
+  let b = 0;
+  for (let i = 0; i < NC; i++) {
+    const c = cells[i], x = i * CW + CW / 2, g = GYc[i];
+    windAt(x, g - 16); c.w = WX;
+    if (c.wet > 0) c.wet -= dt;
+    if (c.fert > 0) c.fert -= dt;
+    if (c.char > 0) c.char -= dt * 0.05;
+    if (c.fire > 0) {
+      c.fire -= dt;
+      for (let d = -1; d <= 1; d += 2) {
+        const n = cells[i + d];
+        if (!n || n.fire > 0 || n.wet > 0 || !flammable(n)) continue;
+        const f = clamp(1 + d * WX / 110, 0.08, 3.5) * (n.type === 'g' ? 1 : 0.7);
+        if (Math.random() < 0.55 * f * dt) ignite(n);
+      }
+      if (Math.random() < 0.3 * dt) spawnEmber(x, g - 12, rand(-20, 20), rand(-70, -30));
+      if (Math.random() < 2.5 * dt) addPart('smoke', x + rand(-3, 3), g - 18, rand(-5, 5), rand(-40, -25), rand(1.5, 2.5), rand(4, 7), '');
+      if (Math.abs(x - MX) < 70 && playing) motherHeat += 13 * dt;
+      if (c.fire <= 0) {
+        c.fire = 0;
+        if (c.flower) { if (c.flower.bloom) stats.burned++; c.flower = null; }
+        c.type = 's'; c.fert = 14; c.char = 1;
+      }
+    } else if (c.flower) {
+      const f = c.flower;
+      if (!f.bloom) {
+        f.g += dt / 9 * (c.fert > 0 ? 2 : 1) * (c.wet > 0 ? 1.8 : 1);
+        if (f.g >= 1) {
+          f.g = 1; f.bloom = true; chime(blooms);
+          for (let k = 0; k < 10; k++) addPart('spark', x, g - 40, rand(-60, 60), rand(-80, 20), 0.8, 2.5, `hsl(${f.hue},90%,75%)`);
+        }
+      } else {
+        f.st -= dt;
+        if (f.st <= 0) { f.st = rand(6, 10); spawnSeed(x, g - 42, rand(-10, 10), rand(-40, -15)); }
+      }
+      if (f.bloom) b++;
+    }
+  }
+  blooms = b; if (b > peakBlooms) peakBlooms = b;
+
+  // clouds
+  cloudTimer -= dt;
+  if (cloudTimer <= 0 && clouds.filter(c => !c.storm).length < 3) {
+    cloudTimer = rand(2.5, 4.5);
+    const fromRight = amb < 0;
+    const c = mkCloud(fromRight ? W + 90 : -90, rand(80, 210), rand(45, 64));
+    c.vx = fromRight ? -40 : 40; clouds.push(c);
+  }
+  for (let i = clouds.length - 1; i >= 0; i--) {
+    const c = clouds[i];
+    windAt(c.x, c.y);
+    const k = c.storm ? 0.6 : 0.95;
+    c.vx += (WX - c.vx) * k * dt; c.vy += (WY - c.vy) * k * dt;
+    if (c.y < 60) c.vy += (60 - c.y) * 3 * dt;
+    if (c.y > 250) c.vy -= (c.y - 250) * 3 * dt;
+    c.x += c.vx * dt; c.y += c.vy * dt;
+    if (c.bolt > 0) c.bolt -= dt;
+    if (c.dying) { c.alpha -= dt * 0.6; if (c.alpha <= 0) { clouds.splice(i, 1); continue; } }
+    else c.alpha = Math.min(1, c.alpha + dt);
+    if (c.storm && !c.dying) {
+      c.rain -= dt;
+      const n = 140 * dt + Math.random();
+      for (let k = 0; k < n; k++) drops.push({ x: c.x + rand(-c.r * 0.9, c.r * 0.9), y: c.y + c.r * 0.3, vx: c.vx * 0.3, vy: rand(450, 550) });
+      if (Math.random() < dt * 0.5) { c.bolt = 0.15; flash = Math.max(flash, 0.25); noise(1.0, 0.25, 'lowpass', 250); }
+      // rain douses embers and cools the mother in the column
+      for (let j = embers.length - 1; j >= 0; j--) {
+        const e = embers[j];
+        if (e.y > c.y && Math.abs(e.x - c.x) < c.r) { if (Math.random() < dt * 4) { stats.doused++; addPart('steam', e.x, e.y, 0, -30, 0.8, 3, ''); embers.splice(j, 1); sizzle(); } }
+      }
+      if (Math.abs(MX - c.x) < c.r + MR) motherHeat = Math.max(0, motherHeat - 25 * dt);
+      for (const s of seeds) if (s.y > c.y && Math.abs(s.x - c.x) < c.r) s.vy += 260 * dt;
+      if (c.rain <= 0) c.dying = true;
+    }
+    if (!c.storm && (c.x < -c.r * 2 - 60 || c.x > W + c.r * 2 + 60)) { clouds.splice(i, 1); continue; }
+  }
+  // collisions -> storms
+  for (let i = 0; i < clouds.length; i++) for (let j = i + 1; j < clouds.length; j++) {
+    const a = clouds[i], c = clouds[j];
+    if (a.storm || c.storm || a.alpha < 0.6 || c.alpha < 0.6) continue;
+    const d = Math.hypot(a.x - c.x, a.y - c.y);
+    if (d < (a.r + c.r) * 0.62) {
+      const s = mkCloud((a.x + c.x) / 2, (a.y + c.y) / 2, Math.max(a.r, c.r) * 1.25);
+      s.storm = true; s.rain = 8; s.alpha = 1; s.vx = (a.vx + c.vx) / 2; s.vy = (a.vy + c.vy) / 2; s.bolt = 0.25;
+      clouds.splice(j, 1); clouds.splice(i, 1); clouds.push(s);
+      stats.storms++; flash = 0.6; shake = 0.5; thunder();
+      addPart('text', s.x - 40, s.y - s.r - 10, 0, -25, 1.6, 0, 'STORM!');
+      i = clouds.length; break;
+    }
+  }
+
+  // rain
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    windAt(d.x, d.y);
+    d.vx += (WX * 0.4 - d.vx) * 2 * dt;
+    d.x += d.vx * dt; d.y += d.vy * dt;
+    const g = gy(d.x);
+    const c = cellAt(d.x);
+    const floor = c.type === 'w' ? WATER_Y : g;
+    if (d.y >= floor) {
+      c.wet = 7;
+      if (c.fire > 0) { c.fire = 0; c.char = 1; stats.doused++; addPart('steam', d.x, g - 6, rand(-10, 10), rand(-60, -30), 1, 5, ''); sizzle(); }
+      if (Math.random() < 0.3) addPart('splash', d.x, floor, rand(-30, 30), rand(-60, -20), 0.25, 1, '');
+      drops.splice(i, 1); continue;
+    }
+    if (d.x < -20 || d.x > W + 20) drops.splice(i, 1);
+  }
+
+  // particles
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    p.life -= dt;
+    if (p.life <= 0) { parts.splice(i, 1); continue; }
+    if (p.type === 'smoke' || p.type === 'steam') { windAt(p.x, p.y); p.vx += (WX * 0.8 - p.vx) * 1.2 * dt; p.size += dt * 6; }
+    if (p.type === 'spark' || p.type === 'splash') p.vy += 200 * dt;
+    if (p.type === 'petal') { windAt(p.x, p.y); p.vx += (WX - p.vx) * 2 * dt; p.vy += (WY + 30 - p.vy) * 2 * dt; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+  }
+
+  // mother heat
+  if (playing) {
+    motherHeat = Math.max(0, motherHeat - 4 * dt);
+    if (motherHeat >= 100) {
+      motherHeat = 100; state = 'lose'; endT = 0; shake = 0.8;
+      noise(1.5, 0.5, 'lowpass', 700); tone(220, 1.5, 0.1, 'sawtooth'); tone(164.8, 2, 0.08, 'sawtooth');
+      cellAt(MX).fire = 4; cellAt(MX).type = 'g';
+    }
+    if (blooms >= GOAL) {
+      state = 'win'; endT = 0;
+      [0, 2, 4, 7].forEach((n, k) => setTimeout(() => chime(n + 3), k * 140));
+      for (let k = 0; k < 150; k++) addPart('petal', rand(0, W), rand(-40, H * 0.5), rand(-30, 30), rand(10, 60), rand(3, 6), rand(3, 5), `hsl(${rand(0, 360)},85%,72%)`);
+    }
+  } else if (state === 'win' || state === 'lose') {
+    endT += dt;
+    if (state === 'lose') motherFlame = Math.min(1, motherFlame + dt);
+  }
+  if (flash > 0) flash -= dt * 1.5;
+  if (shake > 0) shake -= dt;
+}
+
+// ---------------- render ----------------
+function render() {
+  ctx.save();
+  if (shake > 0) ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10);
+  let fireCount = 0; for (const c of cells) if (c.fire > 0) fireCount++;
+  const heat = Math.min(1, fireCount / 30 + T / 400);
+
+  // sky
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#0b0c2a'); sky.addColorStop(0.45, '#2a2452');
+  sky.addColorStop(0.75, `rgb(${170 + heat * 60 | 0},${90 - heat * 30 | 0},${80 - heat * 30 | 0})`); sky.addColorStop(1, '#f0a060');
+  ctx.fillStyle = sky; ctx.fillRect(-20, -20, W + 40, H + 40);
+  for (const s of stars) { ctx.globalAlpha = 0.4 + 0.4 * Math.sin(T * 1.5 + s[3]); ctx.fillStyle = '#fff'; ctx.fillRect(s[0], s[1], s[2], s[2]); }
+  ctx.globalAlpha = 1;
+  // moon
+  ctx.fillStyle = '#f4ecd0'; ctx.beginPath(); ctx.arc(170, 90, 26, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#1a1840'; ctx.beginPath(); ctx.arc(182, 82, 23, 0, TAU); ctx.fill();
+  // far hills
+  ctx.fillStyle = '#3a2d55'; ctx.beginPath(); ctx.moveTo(0, H);
+  for (const [x, y] of hillPts) ctx.lineTo(x, y); ctx.lineTo(W, H); ctx.fill();
+
+  // clouds
+  for (const c of clouds) drawCloud(c);
+
+  // tree
+  ctx.strokeStyle = '#1b1012'; ctx.lineCap = 'round';
+  for (const [x, y, x2, y2, w] of branches) { ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x2, y2); ctx.stroke(); }
+  ctx.globalCompositeOperation = 'lighter';
+  for (const t of tips) { const f = 0.7 + 0.3 * Math.sin(T * 9 + t[2]) + Math.random() * 0.2; drawGlow(t[0], t[1], 18 * f, 0.7); }
+  drawGlow(TX, TBASE - 160, 120, 0.12 + 0.03 * Math.sin(T * 5));
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  for (const t of tips) flame(t[0], t[1] + 4, 14 + 6 * Math.sin(T * 11 + t[2]), Math.sin(T * 3 + t[2]) * 3);
+
+  // ground
+  const gg = ctx.createLinearGradient(0, 480, 0, H);
+  gg.addColorStop(0, '#2f5a32'); gg.addColorStop(1, '#0f2414');
+  ctx.fillStyle = gg; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 8) ctx.lineTo(x, gy(x)); ctx.lineTo(W, H); ctx.fill();
+  // pond
+  ctx.fillStyle = '#2b5f8e'; ctx.beginPath(); ctx.moveTo(POND[0] - 6, WATER_Y);
+  for (let x = POND[0] - 6; x <= POND[1] + 6; x += 4) ctx.lineTo(x, Math.max(WATER_Y, gy(x)));
+  ctx.lineTo(POND[1] + 6, WATER_Y); ctx.fill();
+  ctx.strokeStyle = 'rgba(200,230,255,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let k = 0; k < 4; k++) { const x = POND[0] + 10 + k * 18 + Math.sin(T + k) * 6; ctx.moveTo(x, WATER_Y + 3 + k % 2 * 4); ctx.lineTo(x + 10, WATER_Y + 3 + k % 2 * 4); }
+  ctx.stroke();
+  // rocks under tree
+  ctx.fillStyle = '#4a4550';
+  for (let x = 1155; x < W; x += 22) { ctx.beginPath(); ctx.ellipse(x, gy(x) + 2, 14, 8, 0, 0, TAU); ctx.fill(); }
+  // cell strips (soil / ash / wet)
+  for (let i = 0; i < NC; i++) {
+    const c = cells[i];
+    if (c.type === 'w' || c.type === 'r') continue;
+    const x0 = i * CW, x1 = x0 + CW, y0 = gy(x0), y1 = gy(x1);
+    let col = null;
+    if (c.type === 's') col = c.char > 0.05 || c.fert > 0 ? `rgb(${70 - c.fert * 1.5 | 0},${55 - c.fert | 0},${48 - c.fert | 0})` : '#5e3f27';
+    else if (c.char > 0.05) col = `rgba(30,25,20,${c.char * 0.8})`;
+    if (col) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.lineTo(x1, y1 + 9); ctx.lineTo(x0, y0 + 9); ctx.fill(); }
+    if (c.wet > 0) { ctx.fillStyle = `rgba(120,170,255,${Math.min(0.35, c.wet * 0.06)})`; ctx.fillRect(x0, Math.min(y0, y1) - 1, CW, 6); }
+  }
+  // grass blades
+  ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  ctx.strokeStyle = '#6fae4a'; ctx.beginPath();
+  for (let i = 0; i < NC; i++) {
+    const c = cells[i];
+    if (c.type !== 'g' || c.fire > 0) continue;
+    const lean = clamp(c.w / 160, -1.3, 1.3) + Math.sin(T * 2.2 + i * 0.4) * 0.15;
+    for (let k = 0; k < 3; k++) {
+      const x = i * CW + k * 2.7 + 1, y = GYc[i] + 1, len = (9 + ((i * 7 + k * 13) % 7)) * c.h;
+      ctx.moveTo(x, y); ctx.quadraticCurveTo(x + lean * len * 0.3, y - len * 0.6, x + lean * len * 0.8, y - len * (1 - Math.abs(lean) * 0.25));
+    }
+  }
+  ctx.stroke();
+  // flowers
+  for (let i = 0; i < NC; i++) { const c = cells[i]; if (c.flower) drawFlower(i * CW + CW / 2, GYc[i], c.flower, c.w, c.fire > 0); }
+  // mother
+  drawMother();
+
+  // fire on cells
+  for (let i = 0; i < NC; i++) {
+    const c = cells[i]; if (c.fire <= 0) continue;
+    const x = i * CW + CW / 2, g = GYc[i];
+    const lean = clamp(c.w / 120, -1.5, 1.5) * 8;
+    flame(x, g + 1, 16 + 10 * Math.sin(T * 13 + i) + Math.min(1, c.fire) * 6, lean);
+  }
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < NC; i++) { const c = cells[i]; if (c.fire > 0) drawGlow(i * CW + 4, GYc[i] - 10, 26 + Math.random() * 6, 0.35); }
+  // embers
+  for (const e of embers) {
+    const hf = e.heat / e.max;
+    drawGlow(e.x, e.y, 6 + hf * 10, 0.25 + hf * 0.6);
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  for (const e of embers) {
+    const hf = e.heat / e.max;
+    ctx.fillStyle = hf > 0.6 ? '#fff2b0' : hf > 0.3 ? '#ffa040' : `rgb(${120 + hf * 300 | 0},40,20)`;
+    ctx.fillRect(e.x - 1.5, e.y - 1.5, 3, 3);
+  }
+
+  // seeds
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 0.8; ctx.beginPath();
+  for (const s of seeds) {
+    for (let k = 0; k < 5; k++) { const a = s.rot + k * TAU / 5 - Math.PI / 2; ctx.moveTo(s.x, s.y - 4); ctx.lineTo(s.x + Math.cos(a) * 5, s.y - 4 + Math.sin(a) * 3.5); }
+    ctx.moveTo(s.x, s.y - 4); ctx.lineTo(s.x, s.y + 2);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#e8d8b0';
+  for (const s of seeds) ctx.fillRect(s.x - 1, s.y + 1, 2, 3);
+
+  // rain
+  ctx.strokeStyle = 'rgba(170,200,255,0.55)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (const d of drops) { ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.vx * 0.02, d.y - 12); }
+  ctx.stroke();
+
+  // particles
+  for (const p of parts) {
+    const a = p.life / p.max;
+    switch (p.type) {
+      case 'smoke': ctx.fillStyle = `rgba(60,55,60,${a * 0.35})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill(); break;
+      case 'steam': ctx.fillStyle = `rgba(230,235,255,${a * 0.4})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill(); break;
+      case 'trail': ctx.fillStyle = `rgba(255,140,40,${a * 0.6})`; ctx.fillRect(p.x - 0.75, p.y - 0.75, 1.5, 1.5); break;
+      case 'spark': case 'splash': ctx.globalAlpha = a; ctx.fillStyle = p.type === 'splash' ? '#bcd4ff' : p.col; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); ctx.globalAlpha = 1; break;
+      case 'petal': ctx.globalAlpha = Math.min(1, a * 3); ctx.fillStyle = p.col; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size, p.size * 0.5, p.x * 0.05 + T * 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; break;
+      case 'fade': ctx.strokeStyle = `rgba(255,255,255,${a * 0.5})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y - 3, (1 - a) * 8 + 2, 0, TAU); ctx.stroke(); break;
+      case 'text': ctx.globalAlpha = Math.min(1, a * 2); ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Georgia, serif'; ctx.fillText(p.col, p.x, p.y); ctx.globalAlpha = 1; break;
+    }
+  }
+
+  // wind tracers (the wind made visible)
+  ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+  for (const p of tracers) {
+    const h = p.hist; if (h.length < 6) continue;
+    const sp = h[h.length - 1];
+    const a = clamp((sp - 25) / 400, 0, 0.55);
+    if (a <= 0.01) continue;
+    ctx.strokeStyle = `rgba(225,240,255,${a})`; ctx.beginPath(); ctx.moveTo(h[0], h[1]);
+    for (let k = 3; k < h.length; k += 3) ctx.lineTo(h[k], h[k + 1]);
+    ctx.stroke();
+  }
+  // cursor ring
+  if (state === 'play') {
+    ctx.strokeStyle = ptr.down ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ptr.x, ptr.y, ptr.down ? 26 + Math.min(30, gust / 30) : 14, 0, TAU); ctx.stroke();
+  }
+
+  if (flash > 0) { ctx.fillStyle = `rgba(220,230,255,${flash * 0.5})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
+  ctx.restore();
+  drawUI();
+}
+
+function flame(x, y, h, lean) {
+  ctx.fillStyle = '#ff6a1a';
+  ctx.beginPath(); ctx.moveTo(x - 5, y); ctx.quadraticCurveTo(x - 6, y - h * 0.5, x + lean, y - h); ctx.quadraticCurveTo(x + 6, y - h * 0.5, x + 5, y); ctx.fill();
+  ctx.fillStyle = '#ffd25a'; const h2 = h * 0.55;
+  ctx.beginPath(); ctx.moveTo(x - 2.5, y); ctx.quadraticCurveTo(x - 3, y - h2 * 0.5, x + lean * 0.6, y - h2); ctx.quadraticCurveTo(x + 3, y - h2 * 0.5, x + 2.5, y); ctx.fill();
+}
+
+function drawCloud(c) {
+  ctx.globalAlpha = c.alpha * (c.storm ? 0.95 : 0.85);
+  const col = c.storm ? (c.bolt > 0 ? '#c8c8f0' : '#3b3d58') : '#b9a9c9';
+  const shade = c.storm ? '#2a2b40' : '#8f7fa6';
+  ctx.fillStyle = shade;
+  for (const [dx, dy, r] of c.puffs) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy + 6, r, 0, TAU); ctx.fill(); }
+  ctx.fillStyle = col;
+  for (const [dx, dy, r] of c.puffs) { ctx.beginPath(); ctx.arc(c.x + dx, c.y + dy, r * 0.92, 0, TAU); ctx.fill(); }
+  if (c.storm && c.bolt > 0) {
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath();
+    let x = c.x + rand(-c.r * 0.5, c.r * 0.5), y = c.y + c.r * 0.3; ctx.moveTo(x, y);
+    while (y < gy(x) - 4) { x += rand(-18, 18); y += rand(20, 40); ctx.lineTo(x, Math.min(y, gy(x))); }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawFlower(x, g, f, wind, burning) {
+  const lean = clamp(wind / 200, -0.8, 0.8) + Math.sin(T * 2 + f.sw) * 0.08;
+  const h = 8 + f.g * 34;
+  const hx = x + lean * h * 0.6, hy = g - h * (1 - Math.abs(lean) * 0.2);
+  ctx.strokeStyle = burning ? '#3a2a10' : '#4f8a3a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x, g); ctx.quadraticCurveTo(x, g - h * 0.5, hx, hy); ctx.stroke();
+  if (f.bloom) {
+    ctx.fillStyle = burning ? '#5a3010' : `hsl(${f.hue},80%,68%)`;
+    for (let k = 0; k < 6; k++) { const a = k * TAU / 6 + T * 0.3; ctx.beginPath(); ctx.ellipse(hx + Math.cos(a) * 5, hy + Math.sin(a) * 5, 4.2, 2.6, a, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = '#ffe08a'; ctx.beginPath(); ctx.arc(hx, hy, 3, 0, TAU); ctx.fill();
+  } else {
+    ctx.fillStyle = '#7cc25a'; ctx.beginPath(); ctx.ellipse(hx, hy, 2 + f.g * 2, 3 + f.g * 3, lean, 0, TAU); ctx.fill();
+  }
+}
+
+function drawMother() {
+  windAt(MX, MY);
+  const lean = clamp(WX / 250, -0.5, 0.5);
+  const hx = MX + lean * 40, hy = MY + Math.abs(lean) * 8;
+  ctx.strokeStyle = '#5b8f44'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(MX, MBASE); ctx.quadraticCurveTo(MX - 6, MBASE - 60, hx, hy); ctx.stroke();
+  ctx.strokeStyle = '#4b7d38'; ctx.lineWidth = 3; ctx.fillStyle = '#4b7d38';
+  ctx.beginPath(); ctx.ellipse(MX - 12, MBASE - 30, 14, 4, -0.6, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(MX + 13, MBASE - 45, 14, 4, 0.6, 0, TAU); ctx.fill();
+  const hf = motherHeat / 100;
+  // halo
+  ctx.globalCompositeOperation = 'lighter';
+  if (hf > 0.02) drawGlow(hx, hy, MR * 2 + hf * 30, hf * 0.8);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  const r = MR * (1 - motherFlame * 0.6);
+  const cr = 240 - hf * 10 | 0, cg = 240 - hf * 120 | 0, cb = 240 - hf * 200 | 0;
+  ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.75)`; ctx.lineWidth = 0.9; ctx.beginPath();
+  for (let k = 0; k < 64; k++) {
+    const a = k * TAU / 64 + Math.sin(T + k) * 0.03, rr = r * (0.85 + 0.15 * Math.sin(k * 7.3));
+    ctx.moveTo(hx, hy); ctx.lineTo(hx + Math.cos(a) * rr, hy + Math.sin(a) * rr);
+  }
+  ctx.stroke();
+  ctx.fillStyle = `rgba(${cr},${cg},${cb},0.9)`;
+  for (let k = 0; k < 64; k++) { const a = k * TAU / 64, rr = r * (0.85 + 0.15 * Math.sin(k * 7.3)); ctx.beginPath(); ctx.arc(hx + Math.cos(a) * rr, hy + Math.sin(a) * rr, 1.6, 0, TAU); ctx.fill(); }
+  ctx.fillStyle = '#c9b27a'; ctx.beginPath(); ctx.arc(hx, hy, 5, 0, TAU); ctx.fill();
+  if (motherFlame > 0) flame(hx, hy + 10, 40 * motherFlame + Math.sin(T * 12) * 6, 0);
+}
+
+function panel(x, y, w, h) {
+  ctx.fillStyle = 'rgba(10,10,30,0.55)';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, 10) : ctx.rect(x, y, w, h); ctx.fill();
+}
+
+const HINTS = [
+  [0, 7, 'Press and drag to blow. Everything airborne follows you.'],
+  [7, 14, 'Carry dandelion seeds onto the brown soil to plant them.'],
+  [14, 22, 'Embers ride your wind too. Hot embers rise — keep them up until they cool.'],
+  [22, 30, 'Slam two clouds together to make a storm. Steer the rain onto fires.'],
+  [30, 37, 'Fire creeps the way you blow. Press and hold still to calm the air.'],
+];
+
+function drawUI() {
+  ctx.textBaseline = 'middle';
+  if (state === 'play' || state === 'win' || state === 'lose') {
+    // blooms
+    panel(16, 14, 290, 54);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Georgia, serif'; ctx.textAlign = 'left';
+    ctx.fillText(`Blooms  ${blooms} / ${GOAL}`, 30, 32);
+    for (let k = 0; k < GOAL; k++) {
+      ctx.fillStyle = k < blooms ? `hsl(${k * 37},80%,68%)` : 'rgba(255,255,255,0.15)';
+      ctx.beginPath(); ctx.arc(34 + k * 13.2, 54, 4.5, 0, TAU); ctx.fill();
+    }
+    // mother heat
+    panel(W - 306, 14, 290, 54);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px Georgia, serif'; ctx.textAlign = 'right';
+    ctx.fillText('Mother Dandelion', W - 30, 32);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(W - 290, 48, 260, 10);
+    const hf = motherHeat / 100;
+    ctx.fillStyle = hf > 0.7 ? (Math.sin(T * 20) > 0 ? '#ff3b2a' : '#ffb03a') : hf > 0.4 ? '#ff8a2a' : '#ffd36a';
+    ctx.fillRect(W - 290, 48, 260 * hf, 10);
+    ctx.font = '12px Georgia, serif'; ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillText('heat', W - 290, 32);
+    // time
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.font = '20px Georgia, serif';
+    const m = Math.floor(T / 60), s = Math.floor(T % 60);
+    ctx.fillText(`${m}:${s < 10 ? '0' : ''}${s}`, W / 2, 30);
+    if (state === 'play') {
+      for (const [a, b, text] of HINTS) if (T >= a && T < b) {
+        const al = Math.min(1, (T - a) * 2, (b - T) * 2);
+        ctx.globalAlpha = al; ctx.font = 'italic 20px Georgia, serif';
+        const w = ctx.measureText(text).width + 40;
+        panel(W / 2 - w / 2, 52, w, 36); ctx.fillStyle = '#fff'; ctx.fillText(text, W / 2, 70); ctx.globalAlpha = 1;
+      }
+      if (motherHeat > 55) { ctx.fillStyle = `rgba(255,120,80,${0.6 + 0.4 * Math.sin(T * 12)})`; ctx.font = 'bold 18px Georgia, serif'; ctx.fillText('The Mother is burning — blow the embers away!', W / 2, 108); }
+    }
+  }
+  if (state === 'title') {
+    ctx.fillStyle = 'rgba(5,5,20,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    ctx.font = 'bold 76px Georgia, serif'; ctx.fillText('WINDBORNE', W / 2, 170);
+    ctx.font = 'italic 24px Georgia, serif'; ctx.fillStyle = '#d8d0ff'; ctx.fillText('You are not a character. You are the wind.', W / 2, 228);
+    ctx.font = '19px Georgia, serif'; ctx.fillStyle = '#eee';
+    const lines = [
+      'Carry seeds from the Mother Dandelion onto bare soil.  Grow 20 flowers at once to win.',
+      'A burning tree throws embers — and they ride the same wind as your seeds.',
+      'Hot embers rise. Hold them aloft and they cool to harmless ash.',
+      'Fire creeps downwind. Blooming flowers are fuel. Burnt grass becomes fertile soil.',
+      'Slam two clouds together to make a storm, then steer its rain.',
+      'If the Mother Dandelion overheats, the meadow is lost.',
+    ];
+    lines.forEach((l, k) => ctx.fillText(l, W / 2, 300 + k * 36));
+    ctx.font = 'bold 26px Georgia, serif'; ctx.fillStyle = `rgba(255,230,160,${0.6 + 0.4 * Math.sin(T * 3)})`;
+    ctx.fillText('Click to begin', W / 2, 560);
+    ctx.font = '15px Georgia, serif'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('drag = gust   ·   press & hold still = calm   ·   R = restart   ·   M = mute', W / 2, 600);
+  }
+  if ((state === 'win' || state === 'lose') && endT > 0.8) {
+    const a = Math.min(1, (endT - 0.8) * 2);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(5,5,20,0.6)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 60px Georgia, serif'; ctx.fillStyle = state === 'win' ? '#ffe9a8' : '#ff9a7a';
+    ctx.fillText(state === 'win' ? 'The meadow blooms.' : 'The Mother has burned.', W / 2, 210);
+    ctx.font = 'italic 22px Georgia, serif'; ctx.fillStyle = '#ddd';
+    ctx.fillText(state === 'win' ? 'Twenty flowers sway in your breath.' : 'Without her seeds, the meadow will not return.', W / 2, 262);
+    const m = Math.floor(T / 60), s = Math.floor(T % 60);
+    ctx.font = '20px Georgia, serif'; ctx.fillStyle = '#fff';
+    const st = [
+      `Time  ${m}:${s < 10 ? '0' : ''}${s}`,
+      `Seeds planted  ${stats.planted}     ·     Most blooms at once  ${peakBlooms}`,
+      `Embers cooled in your air  ${stats.cooled}     ·     Fires doused  ${stats.doused}`,
+      `Storms made  ${stats.storms}     ·     Blooms lost to fire  ${stats.burned}`,
+    ];
+    st.forEach((l, k) => ctx.fillText(l, W / 2, 330 + k * 36));
+    if (endT > 1.2) { ctx.font = 'bold 24px Georgia, serif'; ctx.fillStyle = `rgba(255,230,160,${0.6 + 0.4 * Math.sin(endT * 3)})`; ctx.fillText('Click to blow again', W / 2, 510); }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------------- loop ----------------
+reset();
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (state === 'title') {
+    // attract mode: a gentle phantom breeze
+    const t = T * 0.6;
+    brush(300 + Math.sin(t) * 250, 400 + Math.cos(t * 1.3) * 80, Math.cos(t) * 160 + 60, -Math.sin(t * 1.3) * 60, 0.05);
+  }
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

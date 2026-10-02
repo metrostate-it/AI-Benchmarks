@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tower Defense</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    user-select: none;
+  }
+  #wrap {
+    position: relative;
+  }
+  canvas {
+    display: block;
+    background: #161b22;
+    cursor: crosshair;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(8, 10, 15, 0.88);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 18px;
+    z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 { font-size: 42px; letter-spacing: 2px; }
+  .overlay p { color: #8b949e; max-width: 520px; text-align: center; line-height: 1.6; }
+  .btn {
+    background: #238636;
+    color: #fff;
+    border: none;
+    padding: 12px 32px;
+    font-size: 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn:hover { background: #2ea043; }
+  .btn.secondary { background: #30363d; }
+  .btn.secondary:hover { background: #3f4650; }
+  #shop {
+    display: flex;
+    gap: 10px;
+  }
+  .tower-btn {
+    background: #21262d;
+    border: 2px solid #30363d;
+    border-radius: 8px;
+    padding: 10px;
+    cursor: pointer;
+    text-align: center;
+    width: 150px;
+    color: #e6edf3;
+    transition: border-color .15s, transform .1s;
+  }
+  .tower-btn:hover { border-color: #58a6ff; transform: translateY(-2px); }
+  .tower-btn.selected { border-color: #58a6ff; background: #1c2a3a; }
+  .tower-btn.disabled { opacity: .45; cursor: not-allowed; }
+  .tower-btn .tname { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .tower-btn .tcost { font-size: 12px; color: #f0b429; }
+  .tower-btn .tdesc { font-size: 11px; color: #8b949e; margin-top: 4px; line-height: 1.3; }
+  .tower-btn .tdot { width: 14px; height: 14px; border-radius: 50%; margin: 0 auto 6px; }
+  #hud {
+    position: absolute;
+    top: 8px; left: 8px; right: 8px;
+    display: flex;
+    gap: 14px;
+    z-index: 5;
+    pointer-events: none;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .hud-item {
+    background: rgba(13, 17, 23, .75);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 4px 10px;
+  }
+  #tooltip {
+    position: absolute;
+    background: rgba(13, 17, 23, .95);
+    border: 1px solid #58a6ff;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 12px;
+    z-index: 8;
+    pointer-events: none;
+    display: none;
+    min-width: 170px;
+    line-height: 1.5;
+  }
+  #tooltip.show { display: block; }
+  .upgrade-row { display: flex; gap: 8px; margin-top: 8px; pointer-events: auto; }
+  .upgrade-row .btn { padding: 6px 12px; font-size: 12px; }
+  #modifiers {
+    position: absolute;
+    inset: 0;
+    background: rgba(8,10,15,.9);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    z-index: 12;
+  }
+  #modifiers.show { display: flex; }
+  #modifiers h2 { font-size: 28px; }
+  #modChoices { display: flex; gap: 16px; }
+  .mod-card {
+    background: #21262d;
+    border: 2px solid #30363d;
+    border-radius: 10px;
+    padding: 20px;
+    width: 220px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, transform .1s;
+  }
+  .mod-card:hover { border-color: #d29922; transform: translateY(-4px); }
+  .mod-card h3 { font-size: 16px; margin-bottom: 8px; color: #f0b429; }
+  .mod-card p { font-size: 13px; color: #8b949e; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="hud">
+    <div class="hud-item" id="hud-gold">Gold: 200</div>
+    <div class="hud-item" id="hud-lives">Lives: 20</div>
+    <div class="hud-item" id="hud-wave">Wave: 0/10</div>
+    <div class="hud-item" id="hud-mods" style="color:#f0b429"></div>
+    <div class="hud-item" id="hud-heat" style="color:#f85149">Heat: <span id="heat-bar"></span></div>
+  </div>
+  <div id="shop"></div>
+  <div id="tooltip"></div>
+  <div id="modifiers">
+    <h2>Choose a Modifier</h2>
+    <p style="color:#8b949e">Effects apply from the next wave. Trade-offs are real.</p>
+    <div id="modChoices"></div>
+  </div>
+  <div id="overlay" class="overlay">
+    <h1>TOWER DEFENSE</h1>
+    <p>Enemies march along the path. Build 4 distinct towers, manage heat, and survive 10 waves.
+       Armored foes shrug off darts; fast swarms need sustained fire; splitters split on death;
+       a boss ends the game. Choose wisely every 3 waves.</p>
+    <button class="btn" id="start-btn">Start Game</button>
+    </div>
+    <button class="btn" id="wave-btn" style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:6;display:none">Start Wave 1</button>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+// ---------- Canvas & layout ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const TILE = 40;
+const COLS = W / TILE;   // 24
+const ROWS = H / TILE;   // 15
+
+// ---------- Grid ----------
+const grid = []; // grid[r][c] = 0 free, 1 path, 2 tower
+for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(0));
+
+// Path waypoints in tile coordinates (a winding path)
+const pathTiles = [
+  [0,2],[1,2],[2,2],[3,2],[4,2],[5,2],
+  [5,3],[5,4],[5,5],[5,6],[5,7],
+  [4,7],[3,7],[2,7],[1,7],
+  [1,8],[1,9],[1,10],[1,11],[1,12],
+  [2,12],[3,12],[4,12],[5,12],[6,12],[7,12],[8,12],[9,12],[10,12],
+  [10,11],[10,10],[10,9],[10,8],[10,7],[10,6],
+  [11,6],[12,6],[13,6],[14,6],[15,6],[16,6],[17,6],[18,6],[19,6],[20,6],
+  [20,7],[20,8],[20,9],[20,10],[20,11],[20,12],[20,13],[20,14],[21,14]
+];
+
+// Convert tile waypoints to pixel centers (dedupe straight runs)
+function buildWaypoints() {
+  const pts = [];
+  for (const [c, r] of pathTiles) {
+    const x = c * TILE + TILE/2, y = r * TILE + TILE/2;
+    const last = pts[pts.length-1];
+    if (!last || last.x !== x || last.y !== y) pts.push({x, y});
+  }
+  return pts;
+}
+const waypoints = buildWaypoints();
+
+// Mark path tiles
+for (const [c, r] of pathTiles) grid[r][c] = 1;
+
+// ---------- Game state ----------
+const S = {
+  state: 'menu', // menu | playing | paused | modifiers | won | lost
+  gold: 200,
+  lives: 20,
+  wave: 0,
+  maxWave: 10,
+  waveActive: false,
+  waveTimer: 0,
+  spawnQueue: [],
+  spawnTimer: 0,
+  enemies: [],
+  towers: [],
+  projectiles: [],
+  particles: [],
+  textPopups: [],
+  modifiers: [], // active global modifiers
+  selectedTower: null,   // tower object selected for upgrade/sell
+  placingType: null,     // tower type id being placed
+  mouse: { x: -999, y: -999, inside: false },
+  time: 0,
+  heatFlash: 0,
+};
+
+// ---------- Modifiers pool ----------
+const MOD_POOL = [
+  { id:'haste',   name:'Haste',        desc:'Towers fire 25% faster.',                          effect:t=>t.fireRate*0.75 },
+  { id:'power',   name:'Power Surge',  desc:'Towers deal 30% more damage.',                     effect:t=>t.dmg*1.30 },
+  { id:'cheap',   name:'Discount',     desc:'New towers cost 30% less (upgrades unchanged).',   effect:null },
+  { id:'greed',   name:'Greed',        desc:'+60% gold per kill, but -5 lives.',               effect:null, onPick:()=>{ S.gold+=0; S.lives-=5; S.lives=Math.max(0,S.lives); if(S.lives<=0) endGame(false); }},
+  { id:'coolant', name:'Coolant',      desc:'Towers overheat 30% slower — but cost +25%.',     effect:null },
+  { id:'frenzy',  name:'Frenzy',       desc:'Towers fire 50% faster AND overheat 50% faster.',effect:t=>t.fireRate*0.5 },
+  { id:'shield',  name:'Ward',         desc:'Lives restored +5 every wave, but towers cost +15%.', effect:null },
+  { id:'crit',    name:'Catalyst',     desc:'Every 4th hit is a critical (2x damage).',        effect:null },
+];
+
+function pickModifiers() {
+  const pool = [...MOD_POOL];
+  const picks = [];
+  for (let i = 0; i < 3 && pool.length; i++) {
+    picks.push(pool.splice(Math.floor(Math.random()*pool.length), 1)[0]);
+  }
+  return picks;
+}
+
+// ---------- Tower types ----------
+// cost, dmg, range (px), fireRate (s between shots), projectile speed
+const TOWER_TYPES = {
+  dart:   { key:'dart',   name:'Dart Tower',   color:'#7ee787',
+            cost:80,  dmg:8,  range:110, fireRate:0.45, projSpeed:520,
+            desc:'Rapid, cheap. Good vs fast & split enemies.',
+            upgrades:[
+              { dmg:12, range:120, fireRate:0.38, cost:90,  label:'Sharpened' },
+              { dmg:18, range:130, fireRate:0.30, cost:140, label:'Sniper' },
+            ]},
+  cannon: { key:'cannon', name:'Cannon',       color:'#f78166',
+            cost:150, dmg:26, range:95, fireRate:1.5,  projSpeed:380, splash:55,
+            desc:'Splash damage. Great vs armored.',
+            upgrades:[
+              { dmg:42, range:105, fireRate:1.3, cost:150, label:'Heavy', splash:65 },
+              { dmg:66, range:115, fireRate:1.1, cost:220, label:'Mortar', splash:80 },
+            ]},
+  frost:  { key:'frost',  name:'Frost Spire',  color:'#79c0ff',
+            cost:120, dmg:4, range:100, fireRate:0.9, projSpeed:420, slow:0.45, slowDur:2.0,
+            desc:'Slows enemies. Supports damage towers.',
+            upgrades:[
+              { dmg:6,  range:115, fireRate:0.8, cost:110, label:'Cold Snap', slow:0.35, slowDur:2.6 },
+              { dmg:9,  range:130, fireRate:0.65,cost:170, label:'Blizzard',  slow:0.25, slowDur:3.2 },
+            ]},
+  tesla:  { key:'tesla',  name:'Tesla Coil',   color:'#d2a8ff',
+            cost:180, dmg:22, range:140, fireRate:0.8, chain:1, noProjectile:true,
+            desc:'Chain lightning. Hits multiple targets, ignores armor.',
+            upgrades:[
+              { dmg:30, range:155, fireRate:0.7, cost:180, label:'Arc', chain:2 },
+              { dmg:42, range:170, fireRate:0.55,cost:260, label:'Storm', chain:3 },
+            ]},
+};
+
+// ---------- Enemy types ----------
+// hp is a base; scale per wave. armor flat-reduces damage; speed px/s
+const ENEMY_TYPES = {
+  grunt:    { key:'grunt',   name:'Grunt',     color:'#f85149', r:11, baseHp:34,  speed:70,  armor:0,   gold:12, dmgToLives:1 },
+  runner:   { key:'runner',  name:'Runner',    color:'#d29922', r:8,  baseHp:20,  speed:150, armor:0,   gold:10, dmgToLives:1 },
+  armored:  { key:'armored', name:'Armored',   color:'#8b949e', r:14, baseHp:80,  speed:48,  armor:10,  gold:26, dmgToLives:2, split:2, splitR:'runner' },
+  splitter: { key:'splitter',name:'Splitter',  color:'#56d364', r:13, baseHp:55,  speed:55,  armor:0,   gold:16, dmgToLives:1, split:3, splitR:'mote' },
+  mote:     { key:'mote',    name:'Mote',      color:'#3fb950', r:6,  baseHp:14,  speed:110, armor:0,   gold:5,  dmgToLives:1 },
+  boss:     { key:'boss',    name:'Warlord',   color:'#ff7b72', r:22, baseHp:900, speed:32,  armor:18,  gold:250,dmgToLives:10, regen:8 },
+};
+
+// Wave composition: each wave = list of [type, count, gapSeconds]
+const WAVE_DEFS = [
+  [ ['grunt',8,1.1] ],
+  [ ['grunt',10,0.9], ['runner',4,1.4] ],
+  [ ['runner',10,0.8], ['grunt',6,1.0] ],
+  [ ['armored',4,1.8], ['grunt',8,0.8] ],
+  [ ['splitter',5,1.5], ['runner',8,0.7] ],
+  [ ['grunt',10,0.7], ['armored',5,1.5], ['splitter',4,1.3] ],
+  [ ['runner',16,0.5], ['armored',6,1.4] ],
+  [ ['splitter',8,1.0], ['armored',6,1.3], ['grunt',10,0.6] ],
+  [ ['armored',10,1.1], ['splitter',8,0.9], ['runner',12,0.5] ],
+  [ ['boss',1,2.0], ['armored',6,1.5], ['splitter',6,1.2] ],
+];
+
+// HP scales with wave index (0-based): roughly 1 + wave*0.28, boss gets fixed high HP
+function hpScale(waveIdx) { return 1 + waveIdx * 0.30; }
+
+// ---------- Entity constructors ----------
+function dist(a, b) { const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx, dy); }
+
+function makeEnemy(typeKey, waveIdx, spawnAt) {
+  const t = ENEMY_TYPES[typeKey];
+  const scale = typeKey === 'boss' ? 1 : hpScale(waveIdx - 1);
+  const hp = Math.round(t.baseHp * scale);
+  return {
+    typeKey, def: t,
+    x: waypoints[0].x, y: waypoints[0].y,
+    wpIndex: 0,
+    maxHp: hp, hp,
+    speed: t.speed, baseSpeed: t.speed,
+    slow: 1, slowTimer: 0, // slow is a multiplier 0..1 applied to baseSpeed
+    alive: true,
+    flash: 0,
+  };
+}
+
+function makeTower(typeKey, c, r) {
+  const t = TOWER_TYPES[typeKey];
+  return {
+    typeKey, def: t,
+    c, r, x: c*TILE+TILE/2, y: r*TILE+TILE/2,
+    level: 0,
+    dmg: t.dmg, range: t.range, fireRate: t.fireRate, projSpeed: t.projSpeed,
+    splash: t.splash || 0, slow: t.slow || 0, slowDur: t.slowDur || 0, chain: t.chain || 0,
+    cooldown: 0,
+    heat: 0,       // 0..1
+    overheated: false,
+    heatRate: 0.9, // base heat per shot
+    coolRate: 0.55, // cool per second
+    flash: 0,
+    critCounter: 0,
+    totalInvested: 0,
+  };
+}
+
+// ---------- Wave / modifier effect application ----------
+function towerFireRate(tower) {
+  let fr = tower.fireRate;
+  for (const m of S.modifiers) {
+    if (m.effect) fr = m.effect({ fireRate: fr, dmg: tower.dmg });
+  }
+  return fr;
+}
+function towerDmg(tower) {
+  let d = tower.dmg;
+  for (const m of S.modifiers) {
+    if (m.id === 'power') d *= 1.30;
+  }
+  return d;
+}
+function towerCostMult() {
+  let m = 1;
+  for (const mod of S.modifiers) {
+    if (mod.id === 'cheap') m *= 0.70;
+    if (mod.id === 'coolant') m *= 1.25;
+    if (mod.id === 'shield') m *= 1.15;
+  }
+  return m;
+}
+function goldPerKill() {
+  let m = 1;
+  for (const mod of S.modifiers) if (mod.id === 'greed') m *= 1.6;
+  return m;
+}
+function coolRateMult() {
+  let m = 1;
+  for (const mod of S.modifiers) if (mod.id === 'coolant') m *= 1.30;
+  return m;
+}
+function heatRateMult() {
+  let m = 1;
+  for (const mod of S.modifiers) if (mod.id === 'frenzy') m *= 1.5;
+  return m;
+}
+
+// ---------- Start wave ----------
+function startWave() {
+  S.wave++;
+  const waveIdx = S.wave - 1;
+  S.waveActive = true;
+  S.spawnQueue = [];
+  const defs = WAVE_DEFS[waveIdx];
+  let cursor = 0;
+  for (const [type, count, gap] of defs) {
+    for (let i = 0; i < count; i++) {
+      S.spawnQueue.push({ type, at: cursor });
+      cursor += gap;
+    }
+  }
+  S.spawnQueue.sort((a,b)=>a.at-b.at);
+  S.spawnTimer = 0;
+
+  // shield modifier: restore lives each wave
+  for (const mod of S.modifiers) if (mod.id === 'shield') S.lives = Math.min(99, S.lives + 5);
+}
+
+function endWave() {
+  S.waveActive = false;
+  S.spawnQueue = [];
+  // wave clear bonus
+  const bonus = 40 + S.wave * 8;
+  S.gold += bonus;
+  popup(W/2, H/2 - 60, '+' + bonus + ' gold', '#f0b429');
+
+  if (S.wave >= S.maxWave) {
+    endGame(true);
+    return;
+  }
+  // every 3 waves -> modifier choice
+  if (S.wave % 3 === 0 && S.wave < S.maxWave) {
+    S.state = 'modifiers';
+    showModifierChoices();
+  } else {
+    S.state = 'playing';
+    S.waveTimer = 2.0; // short pause before next wave
+  }
+}
+
+function endGame(won) {
+  S.state = won ? 'won' : 'lost';
+  const ov = document.getElementById('overlay');
+  const h = ov.querySelector('h1');
+  const p = ov.querySelector('p');
+  const btn = document.getElementById('start-btn');
+  h.textContent = won ? 'VICTORY' : 'DEFEAT';
+  h.style.color = won ? '#7ee787' : '#f85149';
+  p.textContent = won
+    ? 'You held the line through all 10 waves. The path is safe.'
+    : 'The fortress has fallen. Rebuild and try again.';
+  btn.textContent = 'Play Again';
+  ov.classList.remove('hidden');
+}
+
+// ---------- Modifier UI ----------
+function showModifierChoices() {
+  const box = document.getElementById('modChoices');
+  box.innerHTML = '';
+  const picks = pickModifiers();
+  document.getElementById('modifiers').dataset.picks = JSON.stringify(picks.map(p=>p.id));
+  for (const pick of picks) {
+    const card = document.createElement('div');
+    card.className = 'mod-card';
+    card.innerHTML = `<h3>${pick.name}</h3><p>${pick.desc}</p>`;
+    card.onclick = () => {
+      S.modifiers.push(pick);
+      if (pick.onPick) pick.onPick();
+      document.getElementById('modifiers').classList.remove('show');
+      S.state = 'playing';
+      S.waveTimer = 2.5;
+    };
+    box.appendChild(card);
+  }
+  document.getElementById('modifiers').classList.add('show');
+}
+
+// ---------- Firing ----------
+function fireTower(tower) {
+  // find target: nearest enemy in range
+  let target = null, best = 1e9;
+  for (const e of S.enemies) {
+    if (!e.alive) continue;
+    const d = dist(tower, e);
+    if (d <= tower.range && d < best) { best = d; target = e; }
+  }
+  if (!target) return;
+
+  const dmg = towerDmg(tower);
+  let finalDmg = dmg;
+
+  // crit modifier
+  let crit = false;
+  for (const m of S.modifiers) {
+    if (m.id === 'crit') {
+      tower.critCounter = (tower.critCounter + 1) % 4;
+      if (tower.critCounter === 3) { finalDmg *= 2; crit = true; }
+    }
+  }
+
+  // heat
+  tower.heat += tower.heatRate * heatRateMult();
+  if (tower.heat >= 1) { tower.heat = 1; tower.overheated = true; }
+  tower.flash = 0.12;
+
+  if (tower.def.key === 'tesla') {
+    // chain: instant lightning
+    let cur = target;
+    let chainDmg = finalDmg;
+    const hit = new Set();
+    let prev = { x: tower.x, y: tower.y };
+    for (let i = 0; i <= tower.chain; i++) {
+      if (!cur || hit.has(cur)) break;
+      hit.add(cur);
+      damageEnemy(cur, chainDmg, tower, crit);
+      S.lightning.push({ x1: prev.x, y1: prev.y, x2: cur.x, y2: cur.y, life:0.15 });
+      S.particles.push({ x: cur.x, y: cur.y, vx:0, vy:0, life:0.12, maxLife:0.12, color:'#d2a8ff', size:6 });
+      prev = cur;
+      // find next nearest not-hit
+      let next = null, bd = 1e9;
+      for (const e of S.enemies) {
+        if (!e.alive || hit.has(e)) continue;
+        const d = dist(prev, e);
+        if (d < 110 && d < bd) { bd = d; next = e; }
+      }
+      chainDmg *= 0.7;
+      cur = next;
+    }
+  } else {
+    S.projectiles.push({
+      x: tower.x, y: tower.y, target,
+      speed: tower.projSpeed,
+      dmg: finalDmg,
+      tower, crit,
+      splash: tower.splash || 0,
+      slow: tower.slow || 0,
+      slowDur: tower.slowDur || 0,
+      color: tower.def.color,
+      r: tower.def.key === 'cannon' ? 6 : 3.5,
+    });
+  }
+}
+
+function damageEnemy(e, rawDmg, tower, crit) {
+  if (!e.alive) return;
+  let dmg = rawDmg;
+  // armor flat reduction (tesla ignores armor)
+  if (tower && tower.def.key !== 'tesla') dmg = Math.max(1, dmg - e.def.armor);
+  e.hp -= dmg;
+  e.flash = 0.1;
+  S.particles.push({ x:e.x, y:e.y, vx:(Math.random()-0.5)*120, vy:(Math.random()-0.5)*120, life:0.3, maxLife:0.3, color: crit ? '#ffdf5b' : '#fff', size: crit?6:3 });
+  if (e.hp <= 0) killEnemy(e);
+}
+
+function killEnemy(e) {
+  if (!e.alive) return;
+  e.alive = false;
+  const goldGain = Math.round(e.def.gold * goldPerKill());
+  S.gold += goldGain;
+  popup(e.x, e.y - 14, '+' + goldGain, '#f0b429');
+  // splash burst visual
+  for (let i = 0; i < 8; i++) {
+    const a = Math.random()*Math.PI*2;
+    S.particles.push({ x:e.x, y:e.y, vx:Math.cos(a)*90, vy:Math.sin(a)*90, life:0.4, maxLife:0.4, color:e.def.color, size:4 });
+  }
+  // splits
+  if (e.def.split && e.def.splitR) {
+    for (let i = 0; i < e.def.split; i++) {
+      const child = makeEnemy(e.def.splitR, S.wave, 0);
+      child.x = e.x + (Math.random()-0.5)*16;
+      child.y = e.y + (Math.random()-0.5)*16;
+      child.wpIndex = e.wpIndex;
+      S.enemies.push(child);
+    }
+  }
+}
+
+function popup(x, y, text, color) {
+  S.textPopups.push({ x, y, text, color, life: 0.9, maxLife: 0.9 });
+}
+
+// ---------- Projectiles ----------
+function updateProjectile(p, dt) {
+  if (!p.target || !p.target.alive) {
+    // if target died, just fly straight a bit then vanish
+    p.done = true;
+    return;
+  }
+  const d = dist(p, p.target);
+  const step = p.speed * dt;
+  if (d <= step + p.target.def.r) {
+    // hit
+    if (p.splash > 0) {
+      // splash damage
+      for (const e of S.enemies) {
+        if (!e.alive) continue;
+        const ed = dist(p.target, e);
+        if (ed <= p.splash) damageEnemy(e, p.dmg * (ed < p.splash*0.4 ? 1 : 0.6), p.tower, false);
+      }
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random()*Math.PI*2;
+        S.particles.push({ x:p.target.x, y:p.target.y, vx:Math.cos(a)*140, vy:Math.sin(a)*140, life:0.35, maxLife:0.35, color:p.color, size:5 });
+      }
+    } else {
+      damageEnemy(p.target, p.dmg, p.tower, p.crit);
+    }
+    // slow: tower.slow is the speed multiplier retained (e.g. 0.45 = 45% speed)
+    if (p.slow > 0 && p.target.alive) {
+      p.target.slow = Math.min(p.target.slow, p.slow);
+      p.target.slowTimer = Math.max(p.target.slowTimer, p.slowDur);
+    }
+    p.done = true;
+  } else {
+    const nx = (p.target.x - p.x) / d;
+    const ny = (p.target.y - p.y) / d;
+    p.x += nx * step;
+    p.y += ny * step;
+  }
+}
+
+// ---------- Update ----------
+function update(dt) {
+  S.time += dt;
+  if (S.state !== 'playing') return;
+
+  // wave spawn
+  if (S.waveActive && S.spawnQueue.length) {
+    S.spawnTimer += dt;
+    while (S.spawnQueue.length && S.spawnQueue[0].at <= S.spawnTimer) {
+      const sp = S.spawnQueue.shift();
+      S.enemies.push(makeEnemy(sp.type, S.wave, sp.at));
+    }
+  }
+  if (!S.waveActive) {
+    // countdown before auto-start next wave
+    S.waveTimer -= dt;
+    if (S.waveTimer <= 0 && S.wave < S.maxWave && S.state === 'playing') {
+      startWave();
+    }
+  }
+
+  // enemies move
+  for (const e of S.enemies) {
+    if (!e.alive) continue;
+    // slow decay
+    if (e.slowTimer > 0) {
+      e.slowTimer -= dt;
+      if (e.slowTimer <= 0) e.slow = 1;
+    }
+    // boss regen
+    if (e.def.regen && e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.def.regen*dt);
+    if (e.flash > 0) e.flash -= dt;
+
+    let speed = e.baseSpeed * e.slow;
+    let wp = waypoints[e.wpIndex + 1];
+    if (!wp) {
+      // reached end
+      e.alive = false;
+      S.lives = Math.max(0, S.lives - e.def.dmgToLives);
+      popup(W - 60, e.y, '-' + e.def.dmgToLives + ' life', '#f85149');
+      if (S.lives <= 0) { endGame(false); return; }
+      continue;
+    }
+    const d = dist(e, wp);
+    if (d < speed * dt) {
+      e.wpIndex++;
+      e.x = wp.x; e.y = wp.y;
+      if (e.wpIndex + 1 >= waypoints.length) {
+        e.alive = false;
+        S.lives = Math.max(0, S.lives - e.def.dmgToLives);
+        popup(W - 60, e.y, '-' + e.def.dmgToLives + ' life', '#f85149');
+        if (S.lives <= 0) { endGame(false); return; }
+      }
+    } else {
+      e.x += (wp.x - e.x) / d * speed * dt;
+      e.y += (wp.y - e.y) / d * speed * dt;
+    }
+  }
+  // remove dead (but keep for splash already done) — filter
+  S.enemies = S.enemies.filter(e => e.alive);
+
+  // towers: fire + heat
+  for (const t of S.towers) {
+    if (t.flash > 0) t.flash -= dt;
+    // towers always cool; fire only when not overheated and off cooldown
+    t.heat = Math.max(0, t.heat - t.coolRate * coolRateMult() * dt);
+    if (t.heat >= 1) { t.heat = 1; t.overheated = true; }
+    else if (t.overheated) t.overheated = false;
+    if (!t.overheated) {
+      if (t.cooldown > 0) t.cooldown -= dt;
+      if (t.cooldown <= 0) {
+        fireTower(t);
+        t.cooldown = towerFireRate(t);
+      }
+    }
+  }
+
+  // projectiles
+  for (const p of S.projectiles) updateProjectile(p, dt);
+  S.projectiles = S.projectiles.filter(p => !p.done);
+
+  // lightning fade
+  if (S.lightning) for (const l of S.lightning) l.life -= dt;
+  if (S.lightning) S.lightning = S.lightning.filter(l => l.life > 0);
+
+  // particles
+  for (const pt of S.particles) { pt.life -= dt; pt.x += pt.vx*dt; pt.y += pt.vy*dt; }
+  S.particles = S.particles.filter(pt => pt.life > 0);
+
+  // popups
+  for (const tp of S.textPopups) { tp.life -= dt; tp.y -= 28*dt; }
+  S.textPopups = S.textPopups.filter(tp => tp.life > 0);
+
+  // check wave clear
+  if (S.waveActive && S.spawnQueue.length === 0 && S.enemies.length === 0) {
+    endWave();
+  }
+
+  // heat flash decay
+  if (S.heatFlash > 0) S.heatFlash -= dt;
+}
+
+// S.lightning init
+S.lightning = [];
+
+// ---------- Rendering ----------
+function draw() {
+  ctx.clearRect(0,0,W,H);
+
+  // background grid
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      ctx.fillStyle = (r+c) % 2 === 0 ? '#161b22' : '#1a2029';
+      ctx.fillRect(c*TILE, r*TILE, TILE, TILE);
+    }
+  }
+
+  // path
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#3d444d';
+  ctx.lineWidth = TILE*0.72;
+  ctx.beginPath();
+  waypoints.forEach((p,i)=> i? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+  ctx.stroke();
+  ctx.strokeStyle = '#4d5560';
+  ctx.lineWidth = TILE*0.5;
+  ctx.beginPath();
+  waypoints.forEach((p,i)=> i? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+  ctx.stroke();
+
+  // entry & exit markers
+  ctx.fillStyle = '#3fb950';
+  ctx.beginPath(); ctx.arc(waypoints[0].x, waypoints[0].y, 8, 0, Math.PI*2); ctx.fill();
+  const last = waypoints[waypoints.length-1];
+  ctx.fillStyle = '#f85149';
+  ctx.beginPath(); ctx.arc(last.x, last.y, 8, 0, Math.PI*2); ctx.fill();
+
+  // placement ghost
+  if (S.placingType && S.mouse.inside) {
+    const c = Math.floor(S.mouse.x / TILE), r = Math.floor(S.mouse.y / TILE);
+    const t = TOWER_TYPES[S.placingType];
+    const valid = c>=0&&c<COLS&&r>=0&&r<ROWS&&grid[r][c]===0;
+    const gx = c*TILE+TILE/2, gy = r*TILE+TILE/2;
+    ctx.globalAlpha = 0.25;
+    ctx.fillStyle = valid ? '#7ee787' : '#f85149';
+    ctx.beginPath(); ctx.arc(gx, gy, t.range, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = valid ? '#7ee787' : '#f85149';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(gx, gy, t.range, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = t.color;
+    ctx.beginPath(); ctx.arc(gx, gy, 12, 0, Math.PI*2); ctx.fill();
+  }
+
+  // towers
+  for (const t of S.towers) {
+    // range ring for selected
+    if (S.selectedTower === t) {
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = t.def.color;
+      ctx.beginPath(); ctx.arc(t.x, t.y, t.range, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = t.def.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(t.x, t.y, t.range, 0, Math.PI*2); ctx.stroke();
+    }
+    // base
+    ctx.fillStyle = '#30363d';
+    ctx.fillRect(t.c*TILE+4, t.r*TILE+4, TILE-8, TILE-8);
+    // turret
+    const flash = t.flash > 0;
+    ctx.fillStyle = flash ? '#fff' : t.def.color;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 11, 0, Math.PI*2); ctx.fill();
+    // level pips
+    for (let i = 0; i <= t.level; i++) {
+      ctx.fillStyle = '#f0b429';
+      ctx.beginPath(); ctx.arc(t.x - 8 + i*8, t.y + 15, 2.5, 0, Math.PI*2); ctx.fill();
+    }
+    // heat bar
+    const hw = 26, hh = 4;
+    ctx.fillStyle = '#21262d';
+    ctx.fillRect(t.x - hw/2, t.y - 20, hw, hh);
+    const heatFrac = t.heat;
+    ctx.fillStyle = t.overheated ? '#f85149' : (heatFrac > 0.6 ? '#f0b429' : '#7ee787');
+    ctx.fillRect(t.x - hw/2, t.y - 20, hw*heatFrac, hh);
+    if (t.overheated) {
+      // steam puffs
+      for (let i=0;i<2;i++){
+        ctx.globalAlpha = 0.3*Math.random();
+        ctx.fillStyle = '#8b949e';
+        ctx.beginPath(); ctx.arc(t.x+(Math.random()-0.5)*10, t.y-26-Math.random()*8, 3+Math.random()*3, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // enemies
+  for (const e of S.enemies) {
+    ctx.fillStyle = e.flash > 0 ? '#fff' : e.def.color;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.def.r, 0, Math.PI*2); ctx.fill();
+    // slow tint
+    if (e.slow < 1) {
+      ctx.strokeStyle = '#79c0ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.def.r+3, 0, Math.PI*2); ctx.stroke();
+    }
+    // hp bar
+    const bw = e.def.r*2;
+    ctx.fillStyle = '#21262d';
+    ctx.fillRect(e.x-bw/2, e.y-e.def.r-8, bw, 4);
+    ctx.fillStyle = e.hp/e.maxHp > 0.4 ? '#7ee787' : '#f85149';
+    ctx.fillRect(e.x-bw/2, e.y-e.def.r-8, bw*(e.hp/e.maxHp), 4);
+    // boss crown
+    if (e.def.key === 'boss') {
+      ctx.fillStyle = '#f0b429';
+      ctx.beginPath();
+      ctx.moveTo(e.x-10, e.y-14); ctx.lineTo(e.x-5, e.y-22); ctx.lineTo(e.x, e.y-14);
+      ctx.lineTo(e.x+5, e.y-22); ctx.lineTo(e.x+10, e.y-14); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // projectiles
+  for (const p of S.projectiles) {
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+  }
+
+  // lightning
+  if (S.lightning) for (const l of S.lightning) {
+    ctx.globalAlpha = Math.min(1, l.life/0.15);
+    ctx.strokeStyle = '#d2a8ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(l.x1, l.y1);
+    // jagged
+    const mx = (l.x1+l.x2)/2 + (Math.random()-0.5)*14;
+    const my = (l.y1+l.y2)/2 + (Math.random()-0.5)*14;
+    ctx.lineTo(mx, my); ctx.lineTo(l.x2, l.y2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // particles
+  for (const pt of S.particles) {
+    ctx.globalAlpha = Math.max(0, pt.life/pt.maxLife);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // popups
+  for (const tp of S.textPopups) {
+    ctx.globalAlpha = Math.max(0, tp.life/tp.maxLife);
+    ctx.fillStyle = tp.color;
+    ctx.font = 'bold 13px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(tp.text, tp.x, tp.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+
+  // wave countdown text
+  if (S.state === 'playing' && !S.waveActive && S.wave < S.maxWave && S.waveTimer > 0) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = 'bold 20px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Next wave in ' + Math.ceil(S.waveTimer), W/2, 60);
+    ctx.textAlign = 'left';
+  }
+  if (S.state === 'playing' && !S.waveActive && S.wave === 0) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '16px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Build towers, then press Start Wave', W/2, 60);
+    ctx.textAlign = 'left';
+  }
+
+  // pause dim
+  if (S.state === 'paused') {
+    ctx.fillStyle = 'rgba(8,10,15,.6)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = 'bold 32px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W/2, H/2);
+    ctx.font = '14px Segoe UI, sans-serif';
+    ctx.fillText('Press P to resume', W/2, H/2 + 28);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ---------- HUD / Shop DOM ----------
+const shopEl = document.getElementById('shop');
+const tooltip = document.getElementById('tooltip');
+let shopBtns = {};
+
+function buildShop() {
+  shopEl.innerHTML = '';
+  for (const key of Object.keys(TOWER_TYPES)) {
+    const t = TOWER_TYPES[key];
+    const btn = document.createElement('div');
+    btn.className = 'tower-btn';
+    const cost = Math.round(t.cost * towerCostMult());
+    btn.innerHTML = `<div class="tdot" style="background:${t.color}"></div>
+      <div class="tname">${t.name}</div>
+      <div class="tcost">$${cost}</div>
+      <div class="tdesc">${t.desc}</div>`;
+    btn.dataset.key = key;
+    btn.onclick = () => {
+      if (S.gold < cost) return;
+      S.placingType = (S.placingType === key) ? null : key;
+      S.selectedTower = null;
+      updateShopUI();
+      updateTooltip();
+    };
+    shopEl.appendChild(btn);
+    shopBtns[key] = btn;
+  }
+  // pause button
+  const pb = document.createElement('div');
+  pb.className = 'tower-btn';
+  pb.style.width = '90px';
+  pb.innerHTML = `<div class="tdot" style="background:#8b9499"></div><div class="tname">Pause</div><div class="tdesc">P key</div>`;
+  pb.onclick = togglePause;
+  shopEl.appendChild(pb);
+}
+
+function updateShopUI() {
+  for (const key of Object.keys(TOWER_TYPES)) {
+    const t = TOWER_TYPES[key];
+    const cost = Math.round(t.cost * towerCostMult());
+    const btn = shopBtns[key];
+    btn.querySelector('.tcost').textContent = '$' + cost;
+    btn.classList.toggle('selected', S.placingType === key);
+    btn.classList.toggle('disabled', S.gold < cost);
+  }
+}
+
+function towerUpgradeCost(tower) {
+  if (tower.level >= 1) return null; // 2 upgrade levels max (level 0 -> 1 -> 2)
+  const up = tower.def.upgrades[tower.level];
+  return up ? up.cost : null;
+}
+
+function upgradeTower(tower) {
+  const up = tower.def.upgrades[tower.level];
+  if (!up) return;
+  const cost = up.cost;
+  if (S.gold < cost) return;
+  S.gold -= cost;
+  tower.totalInvested += cost;
+  tower.level++;
+  tower.dmg = up.dmg ?? tower.dmg;
+  tower.range = up.range ?? tower.range;
+  tower.fireRate = up.fireRate ?? tower.fireRate;
+  if (up.splash !== undefined) tower.splash = up.splash;
+  if (up.slow !== undefined) tower.slow = up.slow;
+  if (up.slowDur !== undefined) tower.slowDur = up.slowDur;
+  if (up.chain !== undefined) tower.chain = up.chain;
+  popup(tower.x, tower.y - 22, 'Upgraded!', '#79c0ff');
+  updateTooltip();
+  updateShopUI();
+}
+
+function sellTower(tower) {
+  const refund = Math.round(tower.totalInvested * 0.6);
+  S.gold += refund;
+  grid[tower.r][tower.c] = 0;
+  S.towers = S.towers.filter(t => t !== tower);
+  S.selectedTower = null;
+  popup(tower.x, tower.y, '+' + refund, '#f0b429');
+  updateTooltip();
+}
+
+function updateTooltip() {
+  const t = S.selectedTower;
+  if (!t) { tooltip.classList.remove('show'); return; }
+  const cost = towerUpgradeCost(t);
+  const refund = Math.round(t.totalInvested * 0.6);
+  let html = `<b style="color:${t.def.color}">${t.def.name}</b> — Lv ${t.level}`;
+  html += `<br>Dmg: ${Math.round(towerDmg(t))} | Range: ${t.range}`;
+  html += `<br>Rate: ${towerFireRate(t).toFixed(2)}s | Heat: ${(t.heat*100)|0}%`;
+  if (t.splash) html += `<br>Splash: ${t.splash}`;
+  if (t.slow) html += `<br>Slow: ${(t.slow*100)|0}%`;
+  if (t.chain) html += `<br>Chain: ${t.chain + 1} targets`;
+  const row = document.createElement('div');
+  row.className = 'upgrade-row';
+  if (cost !== null) {
+    const ub = document.createElement('button');
+    ub.className = 'btn';
+    ub.style.background = S.gold >= cost ? '#238636' : '#30363d';
+    ub.textContent = `Upgrade $${cost}`;
+    ub.onclick = (ev) => { ev.stopPropagation(); upgradeTower(t); };
+    row.appendChild(ub);
+  } else {
+    const max = document.createElement('button');
+    max.className = 'btn secondary';
+    max.style.pointerEvents = 'none';
+    max.textContent = 'Max Level';
+    row.appendChild(max);
+  }
+  const sb = document.createElement('button');
+  sb.className = 'btn secondary';
+  sb.textContent = `Sell $${refund}`;
+  sb.onclick = (ev) => { ev.stopPropagation(); sellTower(t); };
+  row.appendChild(sb);
+  tooltip.innerHTML = html;
+  tooltip.appendChild(row);
+  const wr = document.getElementById('wrap').getBoundingClientRect();
+  let tx = t.x + 20, ty = t.y - 40;
+  if (tx + 180 > W) tx = t.x - 200;
+  if (ty < 0) ty = t.y + 20;
+  tooltip.style.left = (t.x + 18) + 'px';
+  tooltip.style.top = (t.y - 30) + 'px';
+  tooltip.classList.add('show');
+}
+
+function updateHud() {
+  document.getElementById('hud-gold').textContent = 'Gold: ' + S.gold;
+  document.getElementById('hud-lives').textContent = 'Lives: ' + S.lives;
+  document.getElementById('hud-wave').textContent = 'Wave: ' + S.wave + '/' + S.maxWave;
+  // active mods
+  const mods = S.modifiers.map(m => m.name).join(', ');
+  document.getElementById('hud-mods').textContent = mods ? 'Mods: ' + mods : '';
+  // heat: show hottest tower
+  let hottest = null;
+  for (const t of S.towers) if (!hottest || t.heat > hottest.heat) hottest = t;
+  const bar = document.getElementById('heat-bar');
+  if (hottest) {
+    const f = hottest.heat;
+    bar.textContent = (f*100|0) + '%' + (hottest.overheated ? ' (OVERHEATING)' : '');
+    document.getElementById('hud-heat').style.color = hottest.overheated ? '#f85149' : (f>0.6?'#f0b429':'#e6edf3');
+  } else {
+    bar.textContent = '—';
+    document.getElementById('hud-heat').style.color = '#8b949e';
+  }
+}
+
+// ---------- Input ----------
+canvas.addEventListener('mousemove', (ev) => {
+  const rect = canvas.getBoundingClientRect();
+  S.mouse.x = (ev.clientX - rect.left) * (W / rect.width);
+  S.mouse.y = (ev.clientY - rect.top) * (H / rect.height);
+  S.mouse.inside = true;
+});
+canvas.addEventListener('mouseleave', () => S.mouse.inside = false);
+
+canvas.addEventListener('click', (ev) => {
+  if (S.state !== 'playing') return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = (ev.clientX - rect.left) * (W / rect.width);
+  const my = (ev.clientY - rect.top) * (H / rect.height);
+  const c = Math.floor(mx / TILE), r = Math.floor(my / TILE);
+
+  if (S.placingType) {
+    if (c>=0&&c<COLS&&r>=0&&r<ROWS&&grid[r][c]===0) {
+      const t = TOWER_TYPES[S.placingType];
+      const cost = Math.round(t.cost * towerCostMult());
+      if (S.gold >= cost) {
+        S.gold -= cost;
+        const tower = makeTower(S.placingType, c, r);
+        tower.totalInvested = cost;
+        S.towers.push(tower);
+        grid[r][c] = 2;
+        // keep placing if shift? simple: keep selected for convenience
+        updateShopUI();
+      }
+    }
+    return;
+  }
+
+  // select existing tower
+  let hit = null;
+  for (const t of S.towers) {
+    if (dist({x:mx,y:my}, t) < 18) { hit = t; break; }
+  }
+  S.selectedTower = hit;
+  updateTooltip();
+});
+
+// right-click cancels placement
+canvas.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  S.placingType = null;
+  S.selectedTower = null;
+  updateShopUI();
+  updateTooltip();
+});
+
+// start wave button via keyboard 'N'
+window.addEventListener('keydown', (ev) => {
+  const k = ev.key.toLowerCase();
+  if (k === 'p') togglePause();
+  if (k === 'escape') { S.placingType = null; S.selectedTower = null; updateShopUI(); updateTooltip(); }
+  if (k === 'n' && S.state === 'playing' && !S.waveActive && S.wave < S.maxWave) {
+    S.waveTimer = 0;
+  }
+  // tower hotkeys 1-4
+  const keys = Object.keys(TOWER_TYPES);
+  const idx = parseInt(k) - 1;
+  if (idx >= 0 && idx < keys.length) {
+    const key = keys[idx];
+    const cost = Math.round(TOWER_TYPES[key].cost * towerCostMult());
+    if (S.gold >= cost) {
+      S.placingType = (S.placingType === key) ? null : key;
+      S.selectedTower = null;
+      updateShopUI();
+    }
+  }
+});
+
+function togglePause() {
+  if (S.state === 'playing') S.state = 'paused';
+  else if (S.state === 'paused') S.state = 'playing';
+}
+
+// start / restart
+document.getElementById('start-btn').addEventListener('click', () => {
+  resetGame();
+  document.getElementById('overlay').classList.add('hidden');
+});
+
+function resetGame() {
+  S.gold = 200; S.lives = 20; S.wave = 0;
+  S.waveActive = false; S.waveTimer = 0; S.spawnTimer = 0;
+  S.spawnQueue = []; S.enemies = []; S.towers = []; S.projectiles = [];
+  S.particles = []; S.textPopups = []; S.lightning = [];
+  S.modifiers = []; S.selectedTower = null; S.placingType = null;
+  S.time = 0; S.heatFlash = 0; S.startGrace = undefined;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) grid[r][c] = 0;
+  for (const [c, r] of pathTiles) grid[r][c] = 1;
+  S.state = 'playing';
+  document.getElementById('modifiers').classList.remove('show');
+  document.getElementById('wave-btn').style.display = 'block';
+  document.getElementById('wave-btn').textContent = 'Start Wave 1';
+  buildShop();
+  updateShopUI();
+  updateTooltip();
+}
+
+// auto-start logic: after a wave clears (wave>0) auto-advance after a short pause;
+// the very first wave waits for the explicit "Start Wave 1" button.
+
+// auto-advance: only after a completed wave (wave>0); first wave waits for the button
+const _update = update;
+update = function(dt) {
+  _update(dt);
+  // update the wave button visibility/label during build phases
+  if (S.state === 'playing' && !S.waveActive && S.wave < S.maxWave) {
+    S.waveTimer -= dt;
+    if (S.wave === 0 || S.waveTimer <= 0) {
+      if (S.wave === 0) {
+        document.getElementById('wave-btn').style.display = 'block';
+        document.getElementById('wave-btn').textContent = 'Start Wave 1';
+      } else {
+        // hide button, wave already auto-started in _update
+        document.getElementById('wave-btn').style.display = 'none';
+      }
+    }
+  } else if (S.waveActive || S.state !== 'playing') {
+    document.getElementById('wave-btn').style.display = 'none';
+  }
+};
+
+// Start Wave button
+document.getElementById('wave-btn').addEventListener('click', () => {
+  if (S.state === 'playing' && !S.waveActive && S.wave < S.maxWave) {
+    S.waveTimer = 0;
+    document.getElementById('wave-btn').style.display = 'none';
+    startWave();
+  }
+});
+
+// main loop
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+// init
+buildShop();
+// Debug/testing hook (harmless if unused)
+window.__TD = { S, TOWER_TYPES, ENEMY_TYPES, waypoints, TOWER_TYPES, startWave,
+  placeTowerForTest(typeKey,c,r){ if(grid[r][c]!==0) return false; const t=TOWER_TYPES[typeKey]; const cost=Math.round(t.cost*towerCostMult()); if(S.gold<cost) return false; S.gold-=cost; const tw=makeTower(typeKey,c,r); tw.totalInvested=cost; S.towers.push(tw); grid[r][c]=2; return true; } };
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

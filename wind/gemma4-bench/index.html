@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zephyr's Path - Wind Control Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #87CEEB; /* Sky Blue */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            pointer-events: none;
+            user-select: none;
+        }
+        .game-over, .win-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        button {
+            padding: 10px 25px;
+            font-size: 18px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui-overlay">
+    <h1 style="margin: 0;">Zephyr's Path</h1>
+    <p>Guide the seed to the flower bed!</p>
+    <div id="score-display">Distance: 0m</div>
+</div>
+
+<div id="game-over" class="game-over">
+    <h2>The seed was lost...</h2>
+    <p id="final-score"></p>
+    <button onclick="resetGame()">Try Again</button>
+</div>
+
+<div id="win-screen" class="win-screen">
+    <h2>Success!</h2>
+    <p>The seed found a safe place to grow.</p>
+    <button onclick="resetGame()">Play Again</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score-display');
+    const gameOverScreen = document.getElementById('game-over');
+    const winScreen = document.getElementById('win-screen');
+    const finalScoreText = document.getElementById('final-score');
+
+    // Game Constants
+    const GRAVITY = 0.05;
+    const DRAG = 0.98;
+    const WIND_STRENGTH = 0.4;
+    const VORTEX_STRENGTH = 0.8;
+
+    // Game State
+    let seed, obstacles, target, particles, windParticles;
+    let mouse = { x: 0, y: 0, active: false, vortex: false };
+    let gameActive = true;
+    let distanceTraveled = 0;
+
+    class Seed {
+        constructor() {
+            this.reset();
+        }
+        reset() {
+            this.x = 100;
+            this.y = canvas.height / 2;
+            this.vx = 2;
+            this.vy = 0;
+            this.radius = 8;
+        }
+        update() {
+            // Apply gravity
+            this.vy += GRAVITY;
+
+            // Apply wind force
+            if (mouse.active) {
+                const dx = mouse.x - this.x;
+                const dy = mouse.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 300) {
+                    const force = mouse.vortex ? VORTEX_STRENGTH : WIND_STRENGTH;
+                    const strength = (1 - dist / 300) * force;
+                    this.vx += (dx / dist) * strength;
+                    this.vy += (dy / dist) * strength;
+                }
+            }
+
+            // Apply drag
+            this.vx *= DRAG;
+            this.vy *= DRAG;
+
+            // Update position
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // Boundary check (off-screen)
+            if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height) {
+                endGame(false);
+            }
+
+            // Check target collision
+            const distToTarget = Math.sqrt(Math.pow(this.x - target.x, 2) + Math.pow(this.y - target.y, 2));
+            if (distToTarget < target.radius) {
+                endGame(true);
+            }
+
+            // Check obstacle collision
+            obstacles.forEach(obs => {
+                const dist = Math.sqrt(Math.pow(this.x - obs.x, 2) + Math.pow(this.y - obs.y, 2));
+                if (dist < obs.radius + this.radius) {
+                    endGame(false);
+                }
+            });
+
+            // Update distance (based on x position)
+            if (this.x > distanceTraveled) {
+                distanceTraveled = this.x;
+            }
+        }
+
+        draw() {
+            // Draw seed (dandelion fluff)
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(Math.atan2(this.vy, this.vx));
+
+            // Main fluff body
+            ctx.fillStyle = 'white';
+            for (let i = 0; i < 6; i++) {
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 12, 4, (i * Math.PI) / 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            // Center core
+            ctx.fillStyle = '#F5DEB8';
+            ctx.beginPath();
+            ctx.arc(0, 0, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+    }
+
+    class Obstacle {
+        constructor(x, y, radius) {
+            this.x = x;
+            this.y = y;
+            this.radius = radius;
+        }
+        draw() {
+            ctx.fillStyle = '#8B4513'; // Brown (Thorns/Branches)
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            // Add some "spikes"
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(this.x + Math.cos(angle) * (this.radius + 10), this.y + Math.sin(angle) * (this.radius + 10));
+                ctx.strokeStyle = '#5D2E0C';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+        }
+    }
+
+    class Target {
+        constructor() {
+            this.x = canvas.width - 100;
+            this.y = canvas.height / 2;
+            this.radius = 50;
+        }
+        draw() {
+            // Draw flower bed/target area
+            const gradient = ctx.createRadialGradient(this.x, this.y, 5, this.x, this.y, this.radius);
+            gradient.addColorStop(0, 'rgba(255, 182, 193, 0.6)'); // Light Pink
+            gradient.addColorStop(1, 'rgba(255, 182, 193, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw a simple flower icon
+            ctx.fillStyle = '#FFD700'; // Yellow center
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, 15, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    class WindParticle {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.vx = (Math.random() - 0.5) * 4;
+            this.vy = (Math.random() - 0.5) * 4;
+            this.life = 1.0;
+            this.decay = Math.random() * 0.05 + 0.02;
+        }
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.life -= this.decay;
+        }
+        draw() {
+            ctx.strokeStyle = `rgba(255, 255, 255, ${this.life * 0.5})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(this.x, this.y);
+            ctx.lineTo(this.x - this.vx * 3, this.y - this.vy * 3);
+            ctx.stroke();
+        }
+    }
+
+    function init() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        seed = new Seed();
+        target = new Target();
+        obstacles = [
+            new Obstacle(300, 200, 40),
+            new Obstacle(500, canvas.height - 200, 60),
+            new Obstacle(800, 300, 50),
+            new Obstacle(1200, canvas.height / 2, 70),
+            new Obstacle(1500, 150, 40),
+        ];
+        particles = [];
+        windParticles = [];
+        distanceTraveled = 0;
+        gameActive = true;
+        gameOverScreen.style.display = 'none';
+        winScreen.style.display = 'none';
+    }
+
+    function endGame(won) {
+        gameActive = false;
+        if (won) {
+            winScreen.style.display = 'block';
+        } else {
+            finalScoreText.innerText = `You traveled ${Math.floor(distanceTraveled)}m`;
+            gameOverScreen.style.display = 'block';
+        }
+    }
+
+    function resetGame() {
+        init();
+    }
+
+    // Input Handlers
+    window.addEventListener('mousemove', (e) => {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+    });
+
+    window.addEventListener('mousedown', () => { mouse.active = true; });
+    window.addEventListener('mouseup', () => {
+        mouse.active = false;
+        mouse.vortex = false;
+    });
+
+    window.addEventListener('keydown', (e) => {
+        if (e.button === 2 || e.code === 'Space') mouse.vortex = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') mouse.vortex = false;
+    });
+
+    // Right click for vortex (if enabled)
+    window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        mouse.vortex = true;
+    });
+
+    function update() {
+        if (!gameActive) return;
+
+        seed.update();
+
+        // Update wind particles
+        if (mouse.active) {
+            for (let i = 0; i < 3; i++) {
+                windParticles.push(new WindParticle(mouse.x, mouse.y));
+            }
+        }
+
+        for (let i = windParticles.length - 1; i >= 0; i--) {
+            windParticles[i].update();
+            if (windParticles[i].life <= 0) {
+                windParticles.splice(i, 1);
+            }
+        }
+
+        scoreDisplay.innerText = `Distance: ${Math.floor(distanceTraveled)}m`;
+    }
+
+    function draw() {
+        // Clear canvas with a gradient sky
+        const skyGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        skyGradient.addColorStop(0, '#87CEEB'); // Sky Blue
+        skyGradient.addColorStop(1, '#E0F6FF'); // Lighter blue at bottom
+        ctx.fillStyle = skyGradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw target
+        target.draw();
+
+        // Draw obstacles
+        obstacles.forEach(obs => obs.draw());
+
+        // Draw wind particles
+        windParticles.forEach(p => p.draw());
+
+        // Draw seed
+        seed.draw();
+
+        requestAnimationFrame(() => {
+            update();
+            draw();
+        });
+    }
+
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+
+    // Start the game
+    init();
+    draw();
+
+</script>
+</body>
+</html>
