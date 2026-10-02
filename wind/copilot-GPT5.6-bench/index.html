@@ -1,61 +1,69 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
-<title>Gustkeeper</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Last Flight of the Dandelions</title>
 <style>
-  :root{color-scheme:dark}
-  *{box-sizing:border-box} html,body{margin:0;height:100%;overflow:hidden;background:#07131d;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
-  canvas{display:block;width:100vw;height:100vh;touch-action:none;cursor:crosshair}
-  #help{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 14px;border:1px solid #ffffff25;border-radius:99px;background:#061018aa;color:#dff8ff;font-size:13px;pointer-events:none;backdrop-filter:blur(8px);white-space:nowrap}
+  *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1930;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#fff}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+  #ui{position:fixed;inset:0;pointer-events:none}
+  .top{display:flex;justify-content:space-between;gap:12px;padding:14px}
+  .pill{background:#071426cc;border:1px solid #ffffff22;border-radius:999px;padding:9px 14px;box-shadow:0 8px 30px #0006;backdrop-filter:blur(8px);font-weight:700;font-size:14px}
+  #message{position:absolute;left:50%;top:15%;transform:translateX(-50%);text-align:center;text-shadow:0 3px 15px #000;transition:opacity .3s;max-width:min(90vw,700px)}
+  #message h1{font-size:clamp(30px,6vw,64px);margin:0 0 8px;line-height:.95} #message p{font-size:clamp(14px,2vw,19px);margin:5px}
+  #start{pointer-events:auto;border:0;border-radius:999px;padding:12px 22px;margin-top:12px;background:#ffe36e;color:#18233b;font-weight:900;font-size:16px;cursor:pointer;box-shadow:0 6px 22px #0005}
+  #hint{position:absolute;bottom:15px;left:50%;transform:translateX(-50%);opacity:.8;text-align:center;font-size:13px;width:95%}
 </style>
 </head>
 <body>
-<canvas id="game"></canvas><div id="help">Drag / WASD: blow &nbsp; • &nbsp; Circle quickly: make a vortex &nbsp; • &nbsp; R: restart</div>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div class="top"><div class="pill" id="score">Seeds home: 0 / 12</div><div class="pill" id="time">Storm in: 120</div><div class="pill" id="gust">Gust: READY</div></div>
+  <div id="message"><h1>LAST FLIGHT</h1><p>You are the wind. Carry 12 dandelion seeds into the moonlit meadow before the storm arrives.</p><p>Move the pointer to blow toward it. Hold to gather a gust, release to burst.</p><p><b>Wind-only trick:</b> spiral around seeds to spin them up. Spinning seeds punch through rain and thorn gaps.</p><button id="start">Become the Wind</button></div>
+  <div id="hint">Mouse/touch aims wind • Hold + release: gust • WASD/arrows also blow • R restarts</div>
+</div>
 <script>
-'use strict';
-const C=document.querySelector('#game'), X=C.getContext('2d'), help=document.querySelector('#help');
-let W,H,D=Math.min(devicePixelRatio||1,2), state, last=0, keys={}, pointer={x:0,y:0,px:0,py:0,down:false}, trail=[];
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), rnd=(a,b)=>a+Math.random()*(b-a);
-function resize(){W=innerWidth;H=innerHeight;C.width=W*D;C.height=H*D;X.setTransform(D,0,0,D,0,0); if(!pointer.x){pointer.x=W/2;pointer.y=H/2}}
-addEventListener('resize',resize); resize();
-addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=1;if(e.key.toLowerCase()==='r')reset()});
-addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
-function pos(e){let r=C.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
-C.addEventListener('pointerdown',e=>{pointer.down=true;let p=pos(e);pointer.x=pointer.px=p.x;pointer.y=pointer.py=p.y;trail=[];C.setPointerCapture(e.pointerId)});
-C.addEventListener('pointermove',e=>{let p=pos(e);pointer.px=pointer.x;pointer.py=pointer.y;pointer.x=p.x;pointer.y=p.y});
-C.addEventListener('pointerup',()=>{pointer.down=false;trail=[]});
-function flower(){let side=Math.floor(Math.random()*4),m=55,x,y;if(side===0){x=rnd(m,W-m);y=m}else if(side===1){x=W-m;y=rnd(m,H-m)}else if(side===2){x=rnd(m,W-m);y=H-m}else{x=m;y=rnd(m,H-m)}return{x,y,r:20,pollen:0,hp:1,phase:rnd(0,6.28)}}
-function reset(){
- state={t:120,score:0,combo:0,health:100,over:false,won:false,flowers:Array.from({length:7},flower),pollen:[],seeds:[],storms:[],particles:[],spawn:2,message:'Carry pollen between flowers. Bloom all seven!',msgT:4,vortexCd:0};
- state.flowers[0].pollen=1; for(let i=0;i<35;i++)state.particles.push({x:rnd(0,W),y:rnd(0,H),vx:0,vy:0,a:rnd(.15,.5)});
-}
-function wind(dt){let wx=0,wy=0;if(keys.a||keys.arrowleft)wx--;if(keys.d||keys.arrowright)wx++;if(keys.w||keys.arrowup)wy--;if(keys.s||keys.arrowdown)wy++;if(pointer.down){wx+=(pointer.x-pointer.px)*.14;wy+=(pointer.y-pointer.py)*.14;trail.push({x:pointer.x,y:pointer.y,t:performance.now()});trail=trail.filter(p=>performance.now()-p.t<650)}let l=Math.hypot(wx,wy);if(l>0){wx=wx/l*220;wy=wy/l*220}return{wx,wy}}
-function makeVortex(){if(state.vortexCd>0||trail.length<10)return;let turns=0;for(let i=2;i<trail.length;i++){let a=Math.atan2(trail[i-1].y-trail[i-2].y,trail[i-1].x-trail[i-2].x),b=Math.atan2(trail[i].y-trail[i-1].y,trail[i].x-trail[i-1].x),d=b-a;while(d>Math.PI)d-=Math.PI*2;while(d<-Math.PI)d+=Math.PI*2;turns+=d}if(Math.abs(turns)>Math.PI*1.55){state.vortexCd=5;trail=[];for(let i=0;i<22;i++)state.seeds.push({x:pointer.x+rnd(-18,18),y:pointer.y+rnd(-18,18),vx:rnd(-80,80),vy:rnd(-80,80),life:4});state.message='VORTEX! Seeds released!';state.msgT=1.4}}
-function update(dt){if(state.over)return;state.t-=dt;state.spawn-=dt;state.vortexCd=Math.max(0,state.vortexCd-dt);state.msgT-=dt;if(state.t<=0){state.over=true;state.won=state.flowers.every(f=>f.pollen>=1)}let {wx,wy}=wind(dt);makeVortex();
- if(state.spawn<=0){state.spawn=rnd(5,8);let y=rnd(60,H-60);state.storms.push({x:W+45,y,r:rnd(30,48),vx:rnd(-100,-65),life:18})}
- for(const f of state.flowers)if(f.pollen>=1&&Math.random()<dt*.9)state.pollen.push({x:f.x,y:f.y,vx:rnd(-20,20),vy:rnd(-20,20),life:8,home:f});
- const all=[...state.pollen,...state.seeds,...state.particles];for(const p of all){let dx=pointer.x-p.x,dy=pointer.y-p.y,d=Math.hypot(dx,dy)||1,boost=pointer.down?clamp(180/d,0,2):0;p.vx=(p.vx||0)+wx*dt*(.55+boost);p.vy=(p.vy||0)+wy*dt*(.55+boost);p.vx*=Math.pow(.3,dt);p.vy*=Math.pow(.3,dt);p.x+=p.vx*dt;p.y+=p.vy*dt;if(p.x<0)p.x=W;if(p.x>W)p.x=0;if(p.y<0)p.y=H;if(p.y>H)p.y=0}
- for(const p of state.pollen){p.life-=dt;for(const f of state.flowers)if(f!==p.home&&Math.hypot(p.x-f.x,p.y-f.y)<f.r+7&&f.pollen<1){f.pollen=1;p.life=0;state.score+=100+state.combo*25;state.combo++;state.message='Bloom chain x'+state.combo+'!';state.msgT=1.1}}
- for(const s of state.seeds){s.life-=dt;for(const storm of state.storms)if(Math.hypot(s.x-storm.x,s.y-storm.y)<storm.r){storm.life=0;s.life=0;state.score+=40}}
- state.pollen=state.pollen.filter(p=>p.life>0);state.seeds=state.seeds.filter(p=>p.life>0);
- for(const s of state.storms){s.x+=s.vx*dt;s.life-=dt;if(s.x<20&&s.life>0){s.life=0;state.health-=18;state.combo=0;state.message='Storm hit the garden!';state.msgT=1.2}}
- state.storms=state.storms.filter(s=>s.life>0&&s.x>-60);if(state.health<=0){state.over=true;state.won=false}if(state.flowers.every(f=>f.pollen>=1)){state.over=true;state.won=true;state.score+=Math.ceil(state.t)*10}}
-function circle(x,y,r,fill){X.beginPath();X.arc(x,y,r,0,7);X.fillStyle=fill;X.fill()}
-function draw(){let g=X.createLinearGradient(0,0,0,H);g.addColorStop(0,'#09283a');g.addColorStop(1,'#07141e');X.fillStyle=g;X.fillRect(0,0,W,H);
- X.strokeStyle='#74d9e725';X.lineWidth=1;for(let x=40;x<W;x+=80){X.beginPath();X.moveTo(x,0);X.lineTo(x-80,H);X.stroke()}
- for(const p of state.particles){X.strokeStyle=`rgba(160,239,255,${p.a})`;X.beginPath();X.moveTo(p.x,p.y);X.lineTo(p.x-(p.vx||0)*.08,p.y-(p.vy||0)*.08);X.stroke()}
- for(const f of state.flowers){let bloom=f.pollen>=1;for(let i=0;i<6;i++){let a=i*Math.PI/3+f.phase,px=f.x+Math.cos(a)*13,py=f.y+Math.sin(a)*13;circle(px,py,bloom?10:7,bloom?'#ffcf5c':'#52717a')}circle(f.x,f.y,7,bloom?'#fff3a1':'#294651')}
- for(const p of state.pollen){circle(p.x,p.y,3,'#ffe87a');X.shadowBlur=10;X.shadowColor='#ffe87a'}X.shadowBlur=0;
- for(const s of state.seeds)circle(s.x,s.y,3,'#a7ffbb');
- for(const s of state.storms){let rg=X.createRadialGradient(s.x,s.y,2,s.x,s.y,s.r);rg.addColorStop(0,'#fc557dcc');rg.addColorStop(1,'#48253a00');circle(s.x,s.y,s.r,rg);X.strokeStyle='#ff6688';X.lineWidth=3;X.beginPath();X.arc(s.x,s.y,s.r*.62,0,5);X.stroke()}
- if(pointer.down){X.strokeStyle='#baf6ff88';X.lineWidth=2;X.beginPath();for(let i=0;i<trail.length;i++)i?X.lineTo(trail[i].x,trail[i].y):X.moveTo(trail[i].x,trail[i].y);X.stroke();circle(pointer.x,pointer.y,8,'#d8fbff88')}
- X.fillStyle='#e9fbff';X.font='700 20px system-ui';X.fillText('GUSTKEEPER',20,31);X.font='14px system-ui';X.fillStyle='#b9dce5';X.fillText(`Time ${Math.max(0,Math.ceil(state.t))}s   Score ${state.score}   Garden ${Math.max(0,state.health)}%`,20,54);
- let n=state.flowers.filter(f=>f.pollen>=1).length;X.fillStyle='#183846';X.fillRect(20,66,220,7);X.fillStyle='#ffcf5c';X.fillRect(20,66,220*n/7,7);X.fillStyle='#b9dce5';X.font='12px system-ui';X.fillText(`${n}/7 flowers bloomed`,20,90);if(state.vortexCd>0)X.fillText(`Vortex recharging ${state.vortexCd.toFixed(1)}s`,20,108);
- if(state.msgT>0){X.textAlign='center';X.font='700 18px system-ui';X.fillStyle='#fff';X.fillText(state.message,W/2,45);X.textAlign='left'}
- if(state.over){X.fillStyle='#031018dd';X.fillRect(0,0,W,H);X.textAlign='center';X.fillStyle=state.won?'#ffdd70':'#ff7192';X.font='800 48px system-ui';X.fillText(state.won?'THE GARDEN SINGS':'THE GARDEN FELL',W/2,H/2-35);X.fillStyle='#dff8ff';X.font='20px system-ui';X.fillText(`Score ${state.score} • Press R or tap to ride again`,W/2,H/2+10);X.font='14px system-ui';X.fillStyle='#9fc5cf';X.fillText('Tip: loop the pointer fast to summon seed-shredding vortices.',W/2,H/2+42);X.textAlign='left'}}
-C.addEventListener('click',()=>{if(state.over)reset()});
-function loop(t){let dt=Math.min((t-last)/1000,.033)||0;last=t;update(dt);draw();requestAnimationFrame(loop)}reset();requestAnimationFrame(loop);
+(()=>{'use strict';
+const C=document.getElementById('c'),X=C.getContext('2d'),scoreEl=document.getElementById('score'),timeEl=document.getElementById('time'),gustEl=document.getElementById('gust'),msg=document.getElementById('message'),start=document.getElementById('start');
+let W,H,dpr,playing=false,won=false,t=120,last=0,score=0,charge=0,down=false,pointer={x:0,y:0,active:false},keys={},seeds=[],drops=[],parts=[],spawn=0,shake=0;
+const rnd=(a,b)=>a+Math.random()*(b-a), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;C.width=W*dpr;C.height=H*dpr;X.setTransform(dpr,0,0,dpr,0,0)} addEventListener('resize',resize);resize();
+function meadow(){return {x:W*.78,y:H*.56,w:W*.16,h:H*.28}}
+function reset(){playing=true;won=false;t=120;score=0;charge=0;seeds=[];drops=[];parts=[];shake=0;for(let i=0;i<20;i++)seeds.push({x:rnd(W*.04,W*.32),y:rnd(H*.22,H*.82),vx:rnd(-8,8),vy:rnd(-4,4),spin:0,phase:rnd(0,7),home:false});msg.style.opacity=0;msg.style.pointerEvents='none';updateUI()}
+start.onclick=reset;
+function end(ok){playing=false;won=ok;msg.style.opacity=1;msg.style.pointerEvents='auto';msg.innerHTML=`<h1>${ok?'THE MEADOW BLOOMS!':'THE STORM WON'}</h1><p>${ok?'You carried spring across the valley.':'You brought '+score+' seeds home. The wind can try again.'}</p><button id="start2">Blow Again</button>`;document.getElementById('start2').onclick=reset}
+function updateUI(){scoreEl.textContent=`Seeds home: ${score} / 12`;timeEl.textContent=`Storm in: ${Math.ceil(t)}`;gustEl.textContent=charge>.93?'Gust: MAX':charge>.05?`Gust: ${Math.round(charge*100)}%`:'Gust: READY'}
+function pos(e){const r=C.getBoundingClientRect();pointer.x=e.clientX-r.left;pointer.y=e.clientY-r.top;pointer.active=true}
+C.addEventListener('pointermove',pos);C.addEventListener('pointerdown',e=>{pos(e);down=true;C.setPointerCapture(e.pointerId)});C.addEventListener('pointerup',e=>{pos(e);if(playing&&charge>.08)burst();down=false});
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=1;if(e.key.toLowerCase()==='r')reset()});addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
+function wind(){let wx=0,wy=0;if(pointer.active){let dx=pointer.x-W/2,dy=pointer.y-H/2,l=Math.hypot(dx,dy)||1;wx=dx/l;wy=dy/l}wx+=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);wy+=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);let l=Math.hypot(wx,wy)||1;return {x:wx/l,y:wy/l}}
+function burst(){let w=wind(),p=190+charge*420;for(const s of seeds)if(!s.home){s.vx+=w.x*p;s.vy+=w.y*p;s.spin+=charge*5}for(let i=0;i<30;i++)parts.push({x:W/2,y:H/2,vx:w.x*rnd(120,400)+rnd(-50,50),vy:w.y*rnd(120,400)+rnd(-50,50),life:rnd(.3,.8)});shake=8;charge=0}
+function tick(dt){if(!playing)return;t-=dt;if(t<=0)return end(false);if(down)charge=clamp(charge+dt*.55,0,1);let w=wind(),m=meadow();spawn-=dt;if(spawn<=0){spawn=rnd(.045,.11);drops.push({x:rnd(0,W),y:-12,vx:rnd(-50,-20),vy:rnd(250,410),r:rnd(1,3)})}
+ for(const d of drops){d.x+=d.vx*dt;d.y+=d.vy*dt}drops=drops.filter(d=>d.y<H+20);
+ for(const s of seeds){if(s.home)continue;let dx=s.x-W/2,dy=s.y-H/2,dist=Math.hypot(dx,dy)||1;let tang=(-dy*w.x+dx*w.y)/dist; s.spin=clamp(s.spin+Math.abs(tang)*dt*.9-dt*.22,0,7);let power=down?.35:1;s.vx+=w.x*65*power*dt;s.vy+=w.y*65*power*dt;s.vy+=14*dt;s.vx*=Math.pow(.93,dt*60);s.vy*=Math.pow(.94,dt*60);s.x+=s.vx*dt;s.y+=s.vy*dt;s.phase+=dt*(3+s.spin);
+   // thorn walls leave narrow gates; sufficient spin slips through
+   const walls=[{x:W*.48,y1:0,y2:H*.42},{x:W*.48,y1:H*.58,y2:H},{x:W*.66,y1:H*.18,y2:H*.72}];
+   for(const a of walls)if(Math.abs(s.x-a.x)<9&&s.y>a.y1&&s.y<a.y2&&s.spin<2.2){s.x=s.x<a.x?a.x-10:a.x+10;s.vx*=-.7;s.spin*=.55}
+   for(const d of drops)if(Math.abs(d.x-s.x)<10&&Math.abs(d.y-s.y)<12&&s.spin<2){s.vx-=45;s.vy+=80}
+   if(s.x>m.x&&s.x<m.x+m.w&&s.y>m.y&&s.y<m.y+m.h){s.home=true;score++;for(let i=0;i<18;i++)parts.push({x:s.x,y:s.y,vx:rnd(-90,90),vy:rnd(-120,10),life:rnd(.5,1.2)});if(score>=12)end(true)}
+   if(s.x<-30){s.x=-25;s.vx=Math.abs(s.vx)} if(s.x>W+30){s.x=W+25;s.vx=-Math.abs(s.vx)} if(s.y<50){s.y=50;s.vy=Math.abs(s.vy)} if(s.y>H+30){s.y=H+20;s.vy=-Math.abs(s.vy)*.6}
+ }
+ for(const p of parts){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt}parts=parts.filter(p=>p.life>0);shake*=.85;updateUI()}
+function draw(){X.save();X.translate(rnd(-shake,shake),rnd(-shake,shake));let g=X.createLinearGradient(0,0,0,H);g.addColorStop(0,'#15284a');g.addColorStop(.65,'#315d68');g.addColorStop(1,'#172d30');X.fillStyle=g;X.fillRect(-10,-10,W+20,H+20);
+ // moon and hills
+ X.fillStyle='#fff5bd';X.beginPath();X.arc(W*.83,H*.17,Math.min(W,H)*.065,0,7);X.fill();X.fillStyle='#14283d';X.beginPath();X.moveTo(0,H*.72);for(let x=0;x<=W;x+=40)X.lineTo(x,H*.64+Math.sin(x*.012)*45);X.lineTo(W,H);X.lineTo(0,H);X.fill();
+ let m=meadow();let mg=X.createRadialGradient(m.x+m.w/2,m.y+m.h/2,5,m.x+m.w/2,m.y+m.h/2,m.w);mg.addColorStop(0,'#d7f28c88');mg.addColorStop(1,'#86d77b11');X.fillStyle=mg;X.fillRect(m.x,m.y,m.w,m.h);X.strokeStyle='#dfff9a';X.setLineDash([8,8]);X.strokeRect(m.x,m.y,m.w,m.h);X.setLineDash([]);X.fillStyle='#edffc8';X.font='700 13px system-ui';X.textAlign='center';X.fillText('MOON MEADOW',m.x+m.w/2,m.y-10);
+ // thorns
+ X.strokeStyle='#511f38';X.lineWidth=8;for(const a of [{x:W*.48,y1:0,y2:H*.42},{x:W*.48,y1:H*.58,y2:H},{x:W*.66,y1:H*.18,y2:H*.72}]){X.beginPath();X.moveTo(a.x,a.y1);X.lineTo(a.x,a.y2);X.stroke();X.fillStyle='#9a4563';for(let y=a.y1+18;y<a.y2;y+=25){X.beginPath();X.moveTo(a.x,y);X.lineTo(a.x+((y/25|0)%2?14:-14),y-9);X.lineTo(a.x,y+4);X.fill()}}
+ // rain
+ X.strokeStyle='#b8ddff77';X.lineWidth=1.5;for(const d of drops){X.beginPath();X.moveTo(d.x,d.y);X.lineTo(d.x-d.vx*.035,d.y-d.vy*.035);X.stroke()}
+ // wind streamlines
+ let w=wind();X.strokeStyle='#e8ffff22';X.lineWidth=2;for(let i=0;i<12;i++){let y=(i+.5)*H/12+Math.sin(performance.now()*.002+i)*10;X.beginPath();X.moveTo(W*.35,y);X.quadraticCurveTo(W*.52+w.x*40,y+w.y*35,W*.7,y+w.y*60);X.stroke()}
+ // seeds
+ for(const s of seeds)if(!s.home){X.save();X.translate(s.x,s.y);X.rotate(Math.atan2(s.vy,s.vx)+Math.sin(s.phase)*.2);if(s.spin>2.2){X.strokeStyle='#ffe97988';X.lineWidth=2;X.beginPath();X.arc(0,0,9+s.spin,0,7);X.stroke()}X.strokeStyle='#f6f1dc';X.lineWidth=1;X.beginPath();X.moveTo(-8,0);X.lineTo(5,0);X.stroke();X.fillStyle='#d7a85e';X.beginPath();X.arc(7,0,2.5,0,7);X.fill();X.strokeStyle='#fff';for(let j=-3;j<=3;j++){X.beginPath();X.moveTo(-7,0);X.lineTo(-13,j*2.1);X.stroke()}X.restore()}
+ for(const p of parts){X.globalAlpha=clamp(p.life,0,1);X.fillStyle='#fff49a';X.fillRect(p.x,p.y,3,3)}X.globalAlpha=1;X.restore()}
+function loop(now){let dt=Math.min((now-last)/1000||0,.033);last=now;tick(dt);draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+})();
 </script>
 </body></html>
