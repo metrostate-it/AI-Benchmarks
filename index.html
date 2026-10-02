@@ -17,6 +17,8 @@
     --wind: #0e7490;
     --wind-soft: #e0f2f5;
     --code-bg: #f1efe9;
+    --star: #d97706;
+    --star-off: #d6d3cb;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -30,6 +32,8 @@
       --wind: #5ec8db;
       --wind-soft: #15303a;
       --code-bg: #262320;
+      --star: #fbbf24;
+      --star-off: #3f3b35;
     }
   }
   * { box-sizing: border-box; }
@@ -66,20 +70,42 @@
     max-height: 420px; overflow: auto;
   }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-  a.card {
-    display: flex; flex-direction: column; gap: 4px;
-    padding: 16px; border-radius: 10px; text-decoration: none; color: inherit;
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
+  .card {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 16px; border-radius: 10px;
     background: var(--surface); border: 1px solid var(--border);
     border-top: 3px solid var(--accent);
-    transition: transform .12s ease, box-shadow .12s ease;
   }
-  .wind a.card { border-top-color: var(--wind); }
-  a.card:hover, a.card:focus-visible { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.08); outline: none; }
-  .card .game { font-size: 1.08rem; font-weight: 650; }
+  .wind .card { border-top-color: var(--wind); }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .card .game { font-size: 1.1rem; font-weight: 650; line-height: 1.25; }
   .card .model { font-size: 0.88rem; color: var(--muted); }
-  .card .play { margin-top: 8px; font-size: 0.85rem; font-weight: 600; color: var(--accent); }
-  .wind .card .play { color: var(--wind); }
+  .rating { text-align: right; flex: none; }
+  .stars {
+    font-size: 1rem; letter-spacing: 1px; line-height: 1;
+    background: linear-gradient(90deg, var(--star) var(--pct), var(--star-off) var(--pct));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .score { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .desc { margin: 0; font-size: 0.9rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; }
+  .chips li { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); border: 1px solid var(--border); }
+  .chips li.hi { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+  .wind .chips li.hi { background: var(--wind-soft); color: var(--wind); }
+  .issues { margin: 0; font-size: 0.8rem; color: var(--muted); }
+  .issues b { color: var(--text); font-weight: 600; }
+  .card-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; padding-top: 4px; }
+  .size { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  a.play {
+    font-size: 0.85rem; font-weight: 600; text-decoration: none; color: #fff;
+    background: var(--accent); padding: 6px 14px; border-radius: 6px;
+  }
+  .wind a.play { background: var(--wind); }
+  a.play:hover, a.play:focus-visible { filter: brightness(1.1); outline: 2px solid var(--text); outline-offset: 2px; }
+  @media (prefers-color-scheme: dark) { a.play { color: #151413; } }
+  .legend { margin-top: 20px; padding: 12px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 0.85rem; color: var(--muted); }
+  .legend b { color: var(--text); }
 
   footer { margin-top: 56px; color: var(--muted); font-size: 0.85rem; }
 </style>
@@ -88,7 +114,8 @@
 <main>
   <header>
     <h1>Game Benchmarks</h1>
-    <p>Two game-building prompts, each given to six AI models. Each model returned one self-contained HTML file with no external assets. Pick a card to play that model's game.</p>
+    <p>Two game-building prompts, each given to six AI models. Each model returned one self-contained HTML file with no external assets. Each card rates the game's fidelity and lists its features.</p>
+    <div class="legend"><b>How the ratings work:</b> 5 means rich, polished gameplay with strong feedback and few or no bugs. 1 means minimal or broken. Ratings come from reading each game's full source code and loading it in Chrome to check for errors, not from playing each one to the end. Only one game, Windborne, has sound.</div>
   </header>
 
   <section class="bench td">
@@ -125,12 +152,63 @@ Build a complete, single-file HTML5 canvas tower defense game. Use no external a
 Return the entire game as one HTML file in a single code block, ready to save and open in a browser.</pre>
     </details>
     <div class="grid">
-      <a class="card" href="tower-defense/opus5.5-bench/"><span class="game">Thermal Siege</span><span class="model">Claude Opus 5.5</span><span class="play">Play →</span></a>
-      <a class="card" href="tower-defense/sonnet5.5-bench/"><span class="game">Meltdown Defense</span><span class="model">Claude Sonnet 5.5</span><span class="play">Play →</span></a>
-      <a class="card" href="tower-defense/copilot-GPT6.0-bench/"><span class="game">Emberline Defense</span><span class="model">GPT-6.0 (via Copilot)</span><span class="play">Play →</span></a>
-      <a class="card" href="tower-defense/copilot-GPT5.6-bench/"><span class="game">Overheat Defense</span><span class="model">GPT-5.6 (via Copilot)</span><span class="play">Play →</span></a>
-      <a class="card" href="tower-defense/gemma4-bench/"><span class="game">Tower Defense Benchmark</span><span class="model">Gemma 4</span><span class="play">Play →</span></a>
-      <a class="card" href="tower-defense/qwen3.8-bench/"><span class="game">Tower Defense</span><span class="model">Qwen 3.8</span><span class="play">Play →</span></a>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Thermal Siege</div><div class="model">Claude Opus 5.5</div></div>
+          <div class="rating"><span class="stars" style="--pct:100%" aria-hidden="true">★★★★★</span><span class="score">5 / 5</span></div>
+        </div>
+        <p class="desc">Five towers, including a beam that ramps up damage the longer it holds one target, and seven enemy types, among them a healer and a boss that enrages and spawns minions. Towers placed next to each other trap heat, while a Cryo Spire cools its neighbors. Offers 14 modifiers.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li><li>Screen shake</li><li>Damage numbers</li><li class="hi">Speed 1–3×</li><li class="hi">Targeting modes</li><li>Hotkeys</li></ul>
+        <div class="card-foot"><span class="size">70 KB</span><a class="play" href="tower-defense/opus5.5-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Meltdown Defense</div><div class="model">Claude Sonnet 5.5</div></div>
+          <div class="rating"><span class="stars" style="--pct:90%" aria-hidden="true">★★★★★</span><span class="score">4.5 / 5</span></div>
+        </div>
+        <p class="desc">Five towers with three levels each. Towers clustered together cool more slowly. The boss summons runners as it loses health. Each of the 9 modifiers is labeled as a boon or a trade-off.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li><li>Screen shake</li><li>Damage numbers</li><li class="hi">Speed 2×</li><li class="hi">Targeting modes</li><li>Hotkeys</li></ul>
+        <div class="card-foot"><span class="size">38 KB</span><a class="play" href="tower-defense/sonnet5.5-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Emberline Defense</div><div class="model">GPT-6.0 (via Copilot)</div></div>
+          <div class="rating"><span class="stars" style="--pct:70%" aria-hidden="true">★★★★★</span><span class="score">3.5 / 5</span></div>
+        </div>
+        <p class="desc">Four towers: an armor piercer, frost, a mortar with lobbed shells, and a chain-lightning arc. Includes floating damage numbers, a placement preview with range, a clean sidebar and 9 modifiers.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li><li>Damage numbers</li><li class="hi">Placement preview</li><li>Hotkeys</li></ul>
+        <div class="card-foot"><span class="size">24 KB</span><a class="play" href="tower-defense/copilot-GPT6.0-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Tower Defense</div><div class="model">Qwen 3.8</div></div>
+          <div class="rating"><span class="stars" style="--pct:60%" aria-hidden="true">★★★★★</span><span class="score">3 / 5</span></div>
+        </div>
+        <p class="desc">Four towers on a tile grid. Armored enemies split into runners, and the boss regenerates health. Includes a critical-hit modifier and a hover panel for upgrades and selling.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li><li>Gold popups</li><li>Placement preview</li><li>Hotkeys</li></ul>
+        <p class="issues"><b>Issues found:</b> Only one upgrade per tower can be bought (the prompt asks for two). Wave 1 starts right away instead of waiting for the button. Overheating only slows the fire rate and never forces a full cooldown.</p>
+        <div class="card-foot"><span class="size">40 KB</span><a class="play" href="tower-defense/qwen3.8-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Overheat Defense</div><div class="model">GPT-5.6 (via Copilot)</div></div>
+          <div class="rating"><span class="stars" style="--pct:50%" aria-hidden="true">★★★★★</span><span class="score">2.5 / 5</span></div>
+        </div>
+        <p class="desc">Very compact (25 lines). Covers the spec with four tower mechanics, heat bars, modifiers and a boss, but uses plain shapes and gives little feedback.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Hit flashes</li></ul>
+        <p class="issues"><b>Issues found:</b> The railgun&#x27;s armor piercing never takes effect. There&#x27;s no range preview while placing a tower.</p>
+        <div class="card-foot"><span class="size">10 KB</span><a class="play" href="tower-defense/copilot-GPT5.6-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Tower Defense Benchmark</div><div class="model">Gemma 4</div></div>
+          <div class="rating"><span class="stars" style="--pct:30%" aria-hidden="true">★★★★★</span><span class="score">1.5 / 5</span></div>
+        </div>
+        <p class="desc">Basic shapes, with an HTML shop and modifier cards.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li></ul>
+        <p class="issues"><b>Issues found:</b> Towers land off to the side of where you click, and they can be built on the path. The Slow tower doesn&#x27;t slow enemies, and the damage modifier does nothing. There&#x27;s no way to sell a tower. Restarting reloads the page, and the game never declares victory after wave 10.</p>
+        <div class="card-foot"><span class="size">20 KB</span><a class="play" href="tower-defense/gemma4-bench/">Play →</a></div>
+      </article>
     </div>
   </section>
 
@@ -145,12 +223,63 @@ Return the entire game as one HTML file in a single code block, ready to save an
 <pre>Make a single-file HTML5 canvas game where the player controls the wind, not a character. Invent what the wind affects, the goal, the lose condition, and one mechanic that only makes sense because you're the wind. No external assets. It should be fun for 2 minutes.</pre>
     </details>
     <div class="grid">
-      <a class="card" href="wind/opus5.5-bench/"><span class="game">Windborne</span><span class="model">Claude Opus 5.5</span><span class="play">Play →</span></a>
-      <a class="card" href="wind/sonnet5.5-bench/"><span class="game">Wind Shepherd</span><span class="model">Claude Sonnet 5.5</span><span class="play">Play →</span></a>
-      <a class="card" href="wind/copilot-GPT6.0-bench/"><span class="game">Windward</span><span class="model">GPT-6.0 (via Copilot)</span><span class="play">Play →</span></a>
-      <a class="card" href="wind/copilot-GPT5.6-bench/"><span class="game">Gustkeeper</span><span class="model">GPT-5.6 (via Copilot)</span><span class="play">Play →</span></a>
-      <a class="card" href="wind/gemma4-bench/"><span class="game">Zephyr's Path</span><span class="model">Gemma 4</span><span class="play">Play →</span></a>
-      <a class="card" href="wind/qwen3.8-bench/"><span class="game">GUST</span><span class="model">Qwen 3.8</span><span class="play">Play →</span></a>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Windborne</div><div class="model">Claude Opus 5.5</div></div>
+          <div class="rating"><span class="stars" style="--pct:100%" aria-hidden="true">★★★★★</span><span class="score">5 / 5</span></div>
+        </div>
+        <p class="desc">You carry dandelion seeds to soil, but embers from a burning tree ride the same wind. Fire spreads downwind, and pushing two clouds together makes a storm you can steer over fires. You win by growing 20 flowers at once.</p>
+        <ul class="chips" aria-label="Features"><li class="hi">Sound</li><li>Title screen</li><li>Particles</li><li>Screen shake</li><li class="hi">Weather &amp; fire</li><li>Tutorial hints</li><li>End-of-game stats</li><li>Touch</li></ul>
+        <div class="card-foot"><span class="size">39 KB</span><a class="play" href="wind/opus5.5-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Wind Shepherd</div><div class="model">Claude Sonnet 5.5</div></div>
+          <div class="rating"><span class="stars" style="--pct:80%" aria-hidden="true">★★★★★</span><span class="score">4 / 5</span></div>
+        </div>
+        <p class="desc">Dragging lays down wind currents that linger and drift, so you can set up a stream that guides falling seeds onto shrinking patches of soil. It&#x27;s endless survival, with combos, a breath meter and a crosswind that keeps getting stronger.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Particles</li><li>Screen shake</li><li>Combos</li><li class="hi">Saved best score</li><li>Touch</li></ul>
+        <div class="card-foot"><span class="size">14 KB</span><a class="play" href="wind/sonnet5.5-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Windward</div><div class="model">GPT-6.0 (via Copilot)</div></div>
+          <div class="rating"><span class="stars" style="--pct:70%" aria-hidden="true">★★★★★</span><span class="score">3.5 / 5</span></div>
+        </div>
+        <p class="desc">You have two minutes to blow seeds from a grove into a garden while keeping the heavier embers out. Space fires a gust and Shift makes a vortex.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li>Pause</li><li>Particles</li><li>Screen shake</li><li>Touch</li></ul>
+        <div class="card-foot"><span class="size">12 KB</span><a class="play" href="wind/copilot-GPT6.0-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">GUST</div><div class="model">Qwen 3.8</div></div>
+          <div class="rating"><span class="stars" style="--pct:70%" aria-hidden="true">★★★★★</span><span class="score">3.5 / 5</span></div>
+        </div>
+        <p class="desc">A puzzle game that guides a single seed through three hand-built levels. The wind passes through walls but the seed can&#x27;t. You can hold your breath to charge a gust.</p>
+        <ul class="chips" aria-label="Features"><li>Title screen</li><li class="hi">3 levels</li><li>Particles</li><li>Charge-up gust</li><li>Touch</li></ul>
+        <p class="issues"><b>Issues found:</b> The finish time only counts the last level.</p>
+        <div class="card-foot"><span class="size">14 KB</span><a class="play" href="wind/qwen3.8-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Gustkeeper</div><div class="model">GPT-5.6 (via Copilot)</div></div>
+          <div class="rating"><span class="stars" style="--pct:50%" aria-hidden="true">★★★★★</span><span class="score">2.5 / 5</span></div>
+        </div>
+        <p class="desc">You carry pollen between seven flowers before time runs out. Circling the pointer quickly summons a vortex that shreds incoming storms.</p>
+        <ul class="chips" aria-label="Features"><li>Combos</li><li class="hi">Gesture vortex</li><li>Touch</li></ul>
+        <p class="issues"><b>Issues found:</b> There&#x27;s no title screen, so play starts immediately.</p>
+        <div class="card-foot"><span class="size">8 KB</span><a class="play" href="wind/copilot-GPT5.6-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Zephyr&#x27;s Path</div><div class="model">Gemma 4</div></div>
+          <div class="rating"><span class="stars" style="--pct:30%" aria-hidden="true">★★★★★</span><span class="score">1.5 / 5</span></div>
+        </div>
+        <p class="desc">You steer one seed past thorny obstacles to a flower bed. The wind pulls the seed toward the cursor, so it plays more like a magnet than wind.</p>
+        <ul class="chips" aria-label="Features"><li>Win &amp; lose screens</li></ul>
+        <p class="issues"><b>Issues found:</b> There&#x27;s no start screen. Obstacles sit at fixed pixel positions, so some fall off-screen in smaller windows. It only works with a mouse.</p>
+        <div class="card-foot"><span class="size">11 KB</span><a class="play" href="wind/gemma4-bench/">Play →</a></div>
+      </article>
     </div>
   </section>
 
