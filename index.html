@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Game Benchmarks</title>
-<meta name="description" content="Two single-file HTML5 game prompts, each built by six AI models. Play them side by side.">
+<meta name="description" content="Single-file HTML5 game prompts built by AI models and Copilot modes. Play them side by side.">
 <style>
   :root {
     --bg: #f6f5f1;
@@ -16,6 +16,8 @@
     --accent-soft: #fdeee4;
     --wind: #0e7490;
     --wind-soft: #e0f2f5;
+    --snake: #15803d;
+    --snake-soft: #e3f4e8;
     --code-bg: #f1efe9;
     --star: #d97706;
     --star-off: #d6d3cb;
@@ -31,6 +33,8 @@
       --accent-soft: #3a2416;
       --wind: #5ec8db;
       --wind-soft: #15303a;
+      --snake: #4ade80;
+      --snake-soft: #16301f;
       --code-bg: #262320;
       --star: #fbbf24;
       --star-off: #3f3b35;
@@ -55,6 +59,8 @@
     background: var(--accent-soft); color: var(--accent);
   }
   .wind .tag { background: var(--wind-soft); color: var(--wind); }
+  .snake .tag { background: var(--snake-soft); color: var(--snake); }
+  .tag.new { background: var(--snake); color: var(--bg); }
   .bench > p { margin: 0 0 14px; color: var(--muted); max-width: 70ch; }
 
   details.prompt {
@@ -78,6 +84,7 @@
     border-top: 3px solid var(--accent);
   }
   .wind .card { border-top-color: var(--wind); }
+  .snake .card { border-top-color: var(--snake); }
   .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   .card .game { font-size: 1.1rem; font-weight: 650; line-height: 1.25; }
   .card .model { font-size: 0.88rem; color: var(--muted); }
@@ -93,6 +100,7 @@
   .chips li { font-size: 0.72rem; padding: 2px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); border: 1px solid var(--border); }
   .chips li.hi { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
   .wind .chips li.hi { background: var(--wind-soft); color: var(--wind); }
+  .snake .chips li.hi { background: var(--snake-soft); color: var(--snake); }
   .issues { margin: 0; font-size: 0.8rem; color: var(--muted); }
   .issues b { color: var(--text); font-weight: 600; }
   .card-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; padding-top: 4px; }
@@ -102,6 +110,7 @@
     background: var(--accent); padding: 6px 14px; border-radius: 6px;
   }
   .wind a.play { background: var(--wind); }
+  .snake a.play { background: var(--snake); }
   a.play:hover, a.play:focus-visible { filter: brightness(1.1); outline: 2px solid var(--text); outline-offset: 2px; }
   @media (prefers-color-scheme: dark) { a.play { color: #151413; } }
   .legend { margin-top: 20px; padding: 12px 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: 0.85rem; color: var(--muted); }
@@ -114,9 +123,54 @@
 <main>
   <header>
     <h1>Game Benchmarks</h1>
-    <p>Two game-building prompts, each given to six AI models. Each model returned one self-contained HTML file with no external assets. Each card rates the game's fidelity and lists its features.</p>
+    <p>Three game-building prompts. Snake was given to three Copilot modes, and the other two prompts were each given to six AI models. Each one returned one self-contained HTML file with no external assets. Each card rates the game's fidelity and lists its features.</p>
     <div class="legend"><b>How the ratings work:</b> 5 means rich, polished gameplay with strong feedback and few or no bugs. 1 means minimal or broken. Ratings come from reading each game's full source code and loading it in Chrome to check for errors, not from playing each one to the end. Only one game, Windborne, has sound.</div>
   </header>
+
+  <section class="bench snake">
+    <div class="bench-head">
+      <h2>Snake</h2>
+      <span class="tag">One-line prompt</span>
+      <span class="tag new">New</span>
+    </div>
+    <p>A casual one-sentence request, given to Copilot in three modes: Quick, Auto and Deep. Same prompt, same tool. The only difference is how much effort Copilot spends.</p>
+    <details class="prompt">
+      <summary>Show the prompt</summary>
+<pre>Make me a snake game in a single html file using javascipt and css. Make the file downloadable as html</pre>
+    </details>
+    <div class="grid">
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Neon Snake</div><div class="model">Copilot, Deep mode</div></div>
+          <div class="rating"><span class="stars" style="--pct:80%" aria-hidden="true">★★★★★</span><span class="score">4 / 5</span></div>
+        </div>
+        <p class="desc">A polished neon look with a glowing, gradient snake that has eyes and a pulsing food dot. Speeds up as you score, and saves your best score between visits. Plays on phones with swipes or an on-screen D-pad.</p>
+        <ul class="chips" aria-label="Features"><li>Start screen</li><li>Pause</li><li class="hi">Saved best score</li><li class="hi">Speeds up</li><li>WASD</li><li>Touch &amp; D-pad</li></ul>
+        <p class="issues"><b>Issues found:</b> Moving into the cell the tail is about to leave counts as a crash.</p>
+        <div class="card-foot"><span class="size">13 KB</span><a class="play" href="snake/copilot-deep-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Snake</div><div class="model">Copilot, Auto mode</div></div>
+          <div class="rating"><span class="stars" style="--pct:40%" aria-hidden="true">★★★★★</span><span class="score">2 / 5</span></div>
+        </div>
+        <p class="desc">Classic snake on a 20×20 grid with plain squares. Food never spawns on the snake, and a Game Over message appears on the board. Press Space to restart.</p>
+        <ul class="chips" aria-label="Features"><li>Game-over screen</li><li>WASD</li><li>Space to restart</li></ul>
+        <p class="issues"><b>Issues found:</b> Starts moving the moment the page loads, with no start screen or pause. Two quick key presses in one tick can turn the snake back into itself. Keyboard only.</p>
+        <div class="card-foot"><span class="size">2 KB</span><a class="play" href="snake/copilot-auto-bench/">Play →</a></div>
+      </article>
+      <article class="card">
+        <div class="card-head">
+          <div><div class="game">Snake Game</div><div class="model">Copilot, Quick mode</div></div>
+          <div class="rating"><span class="stars" style="--pct:30%" aria-hidden="true">★★★★★</span><span class="score">1.5 / 5</span></div>
+        </div>
+        <p class="desc">The bare minimum: arrow keys, a score and a Restart button.</p>
+        <ul class="chips" aria-label="Features"><li>Restart button</li></ul>
+        <p class="issues"><b>Issues found:</b> Game over is a browser alert pop-up. Starts moving the moment the page loads, with no pause. Food can spawn inside the snake. Two quick key presses can turn the snake back into itself. Keyboard only.</p>
+        <div class="card-foot"><span class="size">2 KB</span><a class="play" href="snake/copilot-quick-bench/">Play →</a></div>
+      </article>
+    </div>
+  </section>
 
   <section class="bench td">
     <div class="bench-head">

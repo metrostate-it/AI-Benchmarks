@@ -1,0 +1,1 @@
+Make me a snake game in a single html file using javascipt and css. Make the file downloadable as html
